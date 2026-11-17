@@ -53,7 +53,8 @@ export class UserBuildError extends Error {
   public readonly isUserError = true;
   constructor(
     message: string,
-    public readonly exitCode?: number
+    public readonly exitCode?: number,
+    public readonly logs?: string
   ) {
     super(message);
     this.name = 'UserBuildError';

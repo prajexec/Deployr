@@ -478,7 +478,8 @@ export async function executeBuild(
       const tailLines = logBuffer.trim().split('\n').slice(-10).join('\n');
       throw new UserBuildError(
         tailLines || `Build container exited with non-zero code ${waitResult.StatusCode}`,
-        waitResult.StatusCode
+        waitResult.StatusCode,
+        logBuffer
       );
     }
 
@@ -610,10 +611,7 @@ export async function executeBuild(
       );
     }
 
-    await logWriter?.finish(
-      terminalStatus,
-      isCancelled ? 130 : waitResult?.StatusCode ?? 1
-    );
+    await logWriter?.finish(terminalStatus, isCancelled ? 130 : (waitResult?.StatusCode ?? 1));
 
     if (isCancelled) {
       throw new UserBuildError('Deployment cancelled by user', 130);

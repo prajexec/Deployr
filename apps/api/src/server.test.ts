@@ -357,6 +357,12 @@ describe('API Server', () => {
         getJobs: vi.fn().mockResolvedValue([mockJob]),
       } as any);
 
+      const mockRedis = {
+        publish: vi.fn().mockResolvedValue(1),
+        xadd: vi.fn().mockResolvedValue('1-0'),
+      };
+      vi.spyOn(shared, 'getRedisClient').mockReturnValue(mockRedis as any);
+
       vi.spyOn(shared, 'updateDeploymentStatus').mockResolvedValue({
         id: VALID_ID,
         status: 'cancelled',

@@ -32,6 +32,12 @@ describe('Worker Crash Recovery', () => {
       .spyOn(shared, 'updateDeploymentStatus')
       .mockResolvedValue({} as any);
 
+    const mockRedis = {
+      xadd: vi.fn().mockResolvedValue('1-0'),
+      expire: vi.fn().mockResolvedValue(1),
+    };
+    vi.spyOn(shared, 'getRedisClient').mockReturnValue(mockRedis as any);
+
     const mockKill = vi.fn().mockResolvedValue(undefined);
     const mockRemoveCtr = vi.fn().mockResolvedValue(undefined);
     const mockRemoveVol = vi.fn().mockResolvedValue(undefined);

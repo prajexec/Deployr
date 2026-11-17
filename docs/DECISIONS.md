@@ -378,3 +378,38 @@ In Phase 4, users watching a deployment need to see live build output in real ti
   - Required for `POST /deployments` and `GET /deployments` (listing).
   - `GET /deployments/:id` and `/logs` remain unauthenticated capability URLs based on the 128-bit secret ID.
   - Documented residual risk: any build container reaching the host gateway on port 3000 cannot enumerate deployments without the API key, nor guess 128-bit random deployment IDs.
+
+## 19. Phase 5: Production Robustness, Recovery, Cancellation, and Atomic Releases
+
+### 19.1 Failure Classification & BullMQ Retries
+
+- **User Build Failures vs. Infrastructure Errors**:
+  - `UserBuildError`: syntax errors, failing tests, non-zero exit codes, cgroup OOM kills, build timeouts, missing output directories. Handled by throwing BullMQ's `UnrecoverableError` so BullMQ marks the job permanently failed without wasteful retries.
+  - `InfrastructureError` (or unexpected internal runtime errors): MinIO upload errors, Docker socket connection failures, Postgres write timeouts. Thrown normally with BullMQ configured for 3 attempts and exponential backoff (`delay: 1000`).
+
+### 19.2 Worker Crash Recovery
+
+- Builds left in non-terminal states (`cloning`, `building`, `uploading`) due to worker crash or ungraceful SIGKILL are reaped by `recoverStuckDeployments`:
+  - Run immediately on worker bootstrap and periodically every 60 seconds.
+  - Active builds in memory on the current worker are preserved.
+  - Stuck builds have associated Docker containers (`deployservice-build-<id>`) and volumes (`deployservice-vol-<id>`) forcefully reaped, Postgres status updated to `failed` with descriptive error message, and terminal end event emitted to the Redis log stream.
+
+### 19.3 Atomic Releases & Rollback
+
+- **Project Pointer Architecture**:
+  - `projects` table holds `current_deployment_id` pointing to the active production deployment.
+  - Updated atomically in Postgres only after a deployment transitions to `deployed` (archive verified in MinIO).
+  - Router supports both immutable preview builds (`http://<deploymentId>.localhost:8080`) and project-level production releases (`http://<projectId>.localhost:8080`) via Host subdomain detection (`prj_[a-f0-9]{12}`).
+  - `POST /projects/:id/rollback` endpoint validates ownership and target deployment status, atomically flipping `projects.current_deployment_id` to an earlier successful deployment.
+
+### 19.4 Cancellation Flow
+
+- `POST /deployments/:id/cancel` requires `API_KEY` authentication.
+- For `queued` deployments: job is located in BullMQ waiting/delayed lists and removed immediately.
+- For active builds: API publishes cancellation message on Redis pub/sub channel `deployservice:cancel`. Worker listener triggers immediate container termination (`docker.kill()`), catches cancellation, marks status `cancelled` in Postgres, and emits terminal end event with exit code 130 to Redis log stream.
+- Terminal deployments (`deployed`, `failed`, `cancelled`, `timed_out`) return 409 Conflict.
+
+### 19.5 Graceful Shutdown & Maintenance
+
+- Worker listens for `SIGTERM`/`SIGINT`: stops accepting new jobs from BullMQ, gracefully waits for active builds, with a 15-second hard force timeout killing remaining containers and transitioning state to `failed`.
+- Periodic cleanup task runs every 30 minutes: reaps orphaned Docker build containers and volumes older than 1 hour and ensures 24-hour expiration (`EXPIRE 86400`) on Redis log streams.

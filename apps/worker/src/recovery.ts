@@ -89,10 +89,7 @@ export async function recoverStuckDeployments(
   }
 
   if (recoveredIds.length > 0) {
-    logger.info(
-      { count: recoveredIds.length, recoveredIds },
-      'Stuck deployment recovery complete'
-    );
+    logger.info({ count: recoveredIds.length, recoveredIds }, 'Stuck deployment recovery complete');
   }
 
   return {

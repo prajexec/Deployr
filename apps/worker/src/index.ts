@@ -96,11 +96,14 @@ async function bootstrap() {
   }, 60 * 1000);
 
   // Periodic cleanup sweep every 30 minutes
-  cleanupInterval = setInterval(() => {
-    runCleanupTask({ redisClient: redis }).catch((err: any) => {
-      logger.warn({ err: err.message }, 'Error in periodic cleanup task');
-    });
-  }, 30 * 60 * 1000);
+  cleanupInterval = setInterval(
+    () => {
+      runCleanupTask({ redisClient: redis }).catch((err: any) => {
+        logger.warn({ err: err.message }, 'Error in periodic cleanup task');
+      });
+    },
+    30 * 60 * 1000
+  );
 
   // 4. Subscribe to cancellation channel
   try {
