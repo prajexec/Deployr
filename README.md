@@ -32,8 +32,13 @@ To bootstrap a clean clone without running any manual Docker setup commands:
 # 1. Clone repository & enter workspace
 git clone https://github.com/prajexec/Deployr.git && cd Deployr
 
-# 2. Configure environment (pre-configured with local dev defaults)
+# 2. Configure environment and generate secure API key
 cp .env.example .env
+
+# Generate API key (required: API refuses to start with missing, empty, or placeholder key):
+export API_KEY=$(openssl rand -hex 32)
+# Set API_KEY in .env:
+sed -i '' "s|^API_KEY=.*|API_KEY=${API_KEY}|" .env
 
 # 3. Install dependencies
 pnpm install
@@ -43,6 +48,9 @@ docker compose up -d --build
 ```
 
 `docker compose up -d --build` builds all application containers and the isolated sandbox builder image (`deployservice-builder:latest`). The worker automatically and idempotently creates the dedicated build bridge network (`deployservice-build-net`) on startup before processing any build jobs. No manual Docker network or image management is required.
+
+> [!TIP]
+> **Dashboard Access**: Open `http://localhost:5173` in your browser. Enter your generated `API_KEY` into the top navigation bar's **API Key** field (persisted in local storage) to authorize triggering and listing deployments.
 
 > [!NOTE]
 > All published host ports across `docker-compose.yml` (API `3000`, Router `8080`, Web `5173`) and `docker-compose.dev.yml` (Postgres, Redis, MinIO) are explicitly bound to loopback `127.0.0.1` to prevent services from being exposed to the local area network (LAN).
@@ -60,9 +68,12 @@ pnpm test:integration
 
 ### 4. Create a Deployment
 
+Trigger a deployment using your generated API key:
+
 ```bash
 curl -X POST http://localhost:3000/deployments \
   -H "Content-Type: application/json" \
+  -H "x-api-key: <your-generated-api-key>" \
   -d '{"repoUrl": "https://github.com/vitejs/vite"}'
 ```
 

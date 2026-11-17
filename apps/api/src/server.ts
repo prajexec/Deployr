@@ -33,6 +33,28 @@ const MAX_GLOBAL_SSE = 500;
 const MAX_PER_DEPLOYMENT_SSE = 20;
 const SLOW_CLIENT_BUFFER_LIMIT = 512 * 1024; // 512 KB
 
+export function validateApiKeyConfig(apiKey?: string): string {
+  if (!apiKey || apiKey.trim() === '') {
+    throw new Error('API failed to start: API_KEY is required and cannot be empty.');
+  }
+  const trimmed = apiKey.trim();
+  if (trimmed === 'dev-api-key') {
+    throw new Error(
+      'API failed to start: Insecure API_KEY "dev-api-key" is prohibited. Set a strong random API_KEY.'
+    );
+  }
+  if (
+    (trimmed.startsWith('<') && trimmed.endsWith('>')) ||
+    trimmed.includes('GENERATE_API_KEY') ||
+    trimmed === '<GENERATE_API_KEY_WITH_OPENSSL_RAND_HEX_32>'
+  ) {
+    throw new Error(
+      `API failed to start: API_KEY is still set to placeholder value "${trimmed}". Generate a key using openssl rand -hex 32.`
+    );
+  }
+  return trimmed;
+}
+
 function requireApiKey(request: FastifyRequest, reply: FastifyReply, expectedKey: string): boolean {
   const headerKey = request.headers['x-api-key'];
   const authHeader = request.headers['authorization'];
@@ -49,6 +71,7 @@ function requireApiKey(request: FastifyRequest, reply: FastifyReply, expectedKey
 
 export function buildServer(): FastifyInstance {
   const config = getConfig();
+  const apiKey = validateApiKeyConfig(config.API_KEY || process.env.API_KEY);
   const fastify = Fastify({
     logger: false,
     disableRequestLogging: true,
@@ -119,7 +142,7 @@ export function buildServer(): FastifyInstance {
       },
     },
     async (request, reply) => {
-      if (!requireApiKey(request, reply, config.API_KEY)) {
+      if (!requireApiKey(request, reply, apiKey)) {
         return;
       }
 
@@ -174,7 +197,7 @@ export function buildServer(): FastifyInstance {
 
   // GET /deployments (List - Requires API Key)
   fastify.get('/deployments', async (request, reply) => {
-    if (!requireApiKey(request, reply, config.API_KEY)) {
+    if (!requireApiKey(request, reply, apiKey)) {
       return;
     }
 

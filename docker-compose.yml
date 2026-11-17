@@ -56,7 +56,7 @@ services:
       S3_SECRET_ACCESS_KEY: minioadmin
       S3_BUCKET: deployments
       S3_FORCE_PATH_STYLE: 'true'
-      API_KEY: dev-api-key
+      API_KEY: ${API_KEY}
       FRONTEND_URL: http://localhost:5173
     ports:
       - '127.0.0.1:3000:3000'
@@ -88,7 +88,7 @@ services:
       S3_SECRET_ACCESS_KEY: minioadmin
       S3_BUCKET: deployments
       S3_FORCE_PATH_STYLE: 'true'
-      API_KEY: dev-api-key
+      API_KEY: ${API_KEY}
       FRONTEND_URL: http://localhost:5173
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
@@ -126,7 +126,7 @@ services:
       S3_SECRET_ACCESS_KEY: minioadmin
       S3_BUCKET: deployments
       S3_FORCE_PATH_STYLE: 'true'
-      API_KEY: dev-api-key
+      API_KEY: ${API_KEY}
       FRONTEND_URL: http://localhost:5173
     ports:
       - '127.0.0.1:8080:8080'

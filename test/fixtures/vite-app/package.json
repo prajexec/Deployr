@@ -4,8 +4,5 @@
   "private": true,
   "scripts": {
     "build": "mkdir -p dist/assets && cp index.html dist/index.html && echo 'console.log(\"vite asset\");' > dist/assets/app.js && echo 'body { background: #000; }' > dist/assets/style.css"
-  },
-  "devDependencies": {
-    "vite": "^5.2.0"
   }
 }

@@ -2,9 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { LogEntry, SseLogStreamer } from './sse-client';
 
 export function App() {
-  const [apiKey, setApiKey] = useState(
-    () => localStorage.getItem('deployservice_api_key') || 'dev-api-key'
-  );
+  const [apiKey, setApiKey] = useState(() => localStorage.getItem('deployservice_api_key') || '');
   const [repoUrl, setRepoUrl] = useState('');
   const [deploymentId, setDeploymentId] = useState('');
   const [status, setStatus] = useState<string>('');
@@ -64,6 +62,12 @@ export function App() {
   const handleDeploy = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!repoUrl.trim()) return;
+    if (!apiKey.trim()) {
+      setErrorMsg(
+        'API key is required to trigger deployments. Enter your generated API key in the header.'
+      );
+      return;
+    }
 
     setErrorMsg('');
     setIsDeploying(true);
@@ -126,8 +130,8 @@ export function App() {
             type="password"
             value={apiKey}
             onChange={(e) => handleApiKeyChange(e.target.value)}
-            placeholder="Enter API key"
-            className="bg-slate-800 border border-slate-700 text-xs px-3 py-1.5 rounded-md text-slate-200 focus:outline-none focus:border-indigo-500 w-44"
+            placeholder="openssl rand -hex 32"
+            className="bg-slate-800 border border-slate-700 text-xs px-3 py-1.5 rounded-md text-slate-200 focus:outline-none focus:border-indigo-500 w-52 font-mono"
           />
         </div>
       </header>

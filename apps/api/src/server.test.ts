@@ -1,12 +1,20 @@
-import { describe, expect, it, vi } from 'vitest';
+import crypto from 'node:crypto';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import * as shared from '@deployservice/shared';
 import * as queueModule from './queue.js';
-import { buildServer } from './server.js';
+import { buildServer, validateApiKeyConfig } from './server.js';
 
 const VALID_ID = 'd-0123456789abcdef0123456789abcdef';
 const VALID_ID_2 = 'd-ffffffffffffffffffffffffffffffff';
 
+const testApiKey = crypto.randomBytes(32).toString('hex');
+process.env.API_KEY = testApiKey;
+
 describe('API Server', () => {
+  beforeEach(() => {
+    process.env.API_KEY = testApiKey;
+    shared.resetConfig();
+  });
   describe('GET /healthz', () => {
     it('returns 200 and ok status when all dependencies are healthy', async () => {
       vi.spyOn(shared, 'checkDbHealth').mockResolvedValue(true);
@@ -49,6 +57,42 @@ describe('API Server', () => {
     });
   });
 
+  describe('API Key Startup Validation', () => {
+    it('refuses to start when API_KEY is missing or empty', () => {
+      delete process.env.API_KEY;
+      shared.resetConfig();
+      expect(() => buildServer()).toThrow(/API_KEY is required and cannot be empty/);
+
+      process.env.API_KEY = '   ';
+      shared.resetConfig();
+      expect(() => buildServer()).toThrow(/API_KEY is required and cannot be empty/);
+    });
+
+    it('refuses to start when API_KEY is insecure "dev-api-key"', () => {
+      process.env.API_KEY = 'dev-api-key';
+      shared.resetConfig();
+      expect(() => buildServer()).toThrow(/Insecure API_KEY "dev-api-key" is prohibited/);
+    });
+
+    it('refuses to start when API_KEY is set to placeholder value', () => {
+      process.env.API_KEY = '<GENERATE_API_KEY_WITH_OPENSSL_RAND_HEX_32>';
+      shared.resetConfig();
+      expect(() => buildServer()).toThrow(/placeholder value/);
+
+      process.env.API_KEY = '<SOME_OTHER_PLACEHOLDER>';
+      shared.resetConfig();
+      expect(() => buildServer()).toThrow(/placeholder value/);
+    });
+
+    it('accepts strong random API_KEY', () => {
+      const key = crypto.randomBytes(32).toString('hex');
+      process.env.API_KEY = key;
+      shared.resetConfig();
+      const app = buildServer();
+      expect(app).toBeDefined();
+    });
+  });
+
   describe('API Key Authentication', () => {
     it('rejects POST /deployments with 401 when API key is missing or invalid', async () => {
       const app = buildServer();
@@ -87,14 +131,14 @@ describe('API Server', () => {
       const resHeader = await app.inject({
         method: 'GET',
         url: '/deployments',
-        headers: { 'x-api-key': 'dev-api-key' },
+        headers: { 'x-api-key': testApiKey },
       });
       expect(resHeader.statusCode).toBe(200);
 
       const resBearer = await app.inject({
         method: 'GET',
         url: '/deployments',
-        headers: { authorization: 'Bearer dev-api-key' },
+        headers: { authorization: `Bearer ${testApiKey}` },
       });
       expect(resBearer.statusCode).toBe(200);
       await app.close();
@@ -118,7 +162,7 @@ describe('API Server', () => {
         const res = await app.inject({
           method: 'POST',
           url: '/deployments',
-          headers: { 'x-api-key': 'dev-api-key' },
+          headers: { 'x-api-key': testApiKey },
           payload,
         });
 
@@ -159,7 +203,7 @@ describe('API Server', () => {
       const res = await app.inject({
         method: 'POST',
         url: '/deployments',
-        headers: { 'x-api-key': 'dev-api-key' },
+        headers: { 'x-api-key': testApiKey },
         payload: { repoUrl: 'https://github.com/facebook/react' },
       });
 
@@ -181,7 +225,7 @@ describe('API Server', () => {
         method: 'POST',
         url: '/deployments',
         headers: {
-          'x-api-key': 'dev-api-key',
+          'x-api-key': testApiKey,
           'content-type': 'text/plain',
         },
         payload: 'https://github.com/facebook/react',

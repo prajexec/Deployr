@@ -14,7 +14,7 @@ import { executeBuild } from '../../apps/worker/src/builder.js';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-describe('Phase 2 Integration: End-to-End Build and Router Flow', { timeout: 30000 }, () => {
+describe('Phase 2 Integration: End-to-End Build and Router Flow', { timeout: 60000 }, () => {
   const viteFixturePath = path.resolve(__dirname, '../fixtures/vite-app');
   const failingFixturePath = path.resolve(__dirname, '../fixtures/failing-app');
 

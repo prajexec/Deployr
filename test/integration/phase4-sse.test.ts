@@ -1,3 +1,4 @@
+import crypto from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import {
   closeDbPool,
@@ -8,6 +9,7 @@ import {
   ensureBucket,
   getDbPool,
   getRedisClient,
+  resetConfig,
   runMigrations,
   updateDeploymentStatus,
   uploadObject,
@@ -20,6 +22,8 @@ describe('Phase 4 Integration: SSE Live Log Streaming & Archive Replay', () => {
   const redis = getRedisClient();
 
   beforeAll(async () => {
+    process.env.API_KEY = crypto.randomBytes(32).toString('hex');
+    resetConfig();
     const pool = getDbPool();
     await pool.query('SELECT 1');
     await runMigrations();
