@@ -38,8 +38,7 @@ export async function recoverStuckDeployments(
 ): Promise<RecoveryResult> {
   const docker = options.dockerClient || getDockerClient();
   const redis = options.redisClient || getRedisClient();
-  const buildTimeoutMs =
-    options.buildTimeoutMs ?? getConfig().BUILD_TIMEOUT_MS ?? 5 * 60 * 1000;
+  const buildTimeoutMs = options.buildTimeoutMs ?? getConfig().BUILD_TIMEOUT_MS ?? 5 * 60 * 1000;
 
   const stuckRows = await getStuckDeployments(buildTimeoutMs);
   const recoveredIds: string[] = [];
@@ -52,8 +51,7 @@ export async function recoverStuckDeployments(
   const bullMqDeploymentIds = new Set<string>();
   let tempQueue: Queue<any> | null = null;
   const queue =
-    options.queue ||
-    (tempQueue = new Queue(DEPLOYMENT_QUEUE_NAME, { connection: redis }));
+    options.queue || (tempQueue = new Queue(DEPLOYMENT_QUEUE_NAME, { connection: redis }));
 
   try {
     const jobs = await queue.getJobs(['waiting', 'active', 'delayed', 'prioritized']);

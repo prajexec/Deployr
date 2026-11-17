@@ -307,7 +307,9 @@ export function App() {
                 v1.0
               </span>
             </h1>
-            <p className="text-xs text-slate-400">Production Docker Sandbox & Isolated Edge Hosting</p>
+            <p className="text-xs text-slate-400">
+              Production Docker Sandbox & Isolated Edge Hosting
+            </p>
           </div>
         </div>
 
@@ -339,7 +341,10 @@ export function App() {
         {errorMsg && (
           <div className="text-xs text-red-300 bg-red-950/40 border border-red-800/80 p-3 rounded-xl flex items-center justify-between shadow-sm">
             <span>{errorMsg}</span>
-            <button onClick={() => setErrorMsg('')} className="text-red-400 hover:text-red-200 ml-4 font-bold">
+            <button
+              onClick={() => setErrorMsg('')}
+              className="text-red-400 hover:text-red-200 ml-4 font-bold"
+            >
               ×
             </button>
           </div>
@@ -347,7 +352,10 @@ export function App() {
         {successMsg && (
           <div className="text-xs text-emerald-300 bg-emerald-950/40 border border-emerald-800/80 p-3 rounded-xl flex items-center justify-between shadow-sm">
             <span>{successMsg}</span>
-            <button onClick={() => setSuccessMsg('')} className="text-emerald-400 hover:text-emerald-200 ml-4 font-bold">
+            <button
+              onClick={() => setSuccessMsg('')}
+              className="text-emerald-400 hover:text-emerald-200 ml-4 font-bold"
+            >
               ×
             </button>
           </div>
@@ -374,7 +382,9 @@ export function App() {
 
               <div className="flex items-center gap-3">
                 {selectedDeployment &&
-                  ['queued', 'cloning', 'building', 'uploading'].includes(selectedDeployment.status) && (
+                  ['queued', 'cloning', 'building', 'uploading'].includes(
+                    selectedDeployment.status
+                  ) && (
                     <button
                       onClick={() => handleCancel(selectedDeployment.id)}
                       disabled={actionLoading}
@@ -386,7 +396,9 @@ export function App() {
 
                 {selectedDeployment && selectedDeployment.status === 'deployed' && (
                   <button
-                    onClick={() => handleRollback(selectedDeployment.project_id, selectedDeployment.id)}
+                    onClick={() =>
+                      handleRollback(selectedDeployment.project_id, selectedDeployment.id)
+                    }
                     disabled={actionLoading}
                     className="bg-purple-600 hover:bg-purple-500 disabled:opacity-50 text-white text-xs font-semibold px-3 py-1.5 rounded-lg transition"
                   >
@@ -402,7 +414,9 @@ export function App() {
                 <div className="flex items-center justify-between">
                   <div className="flex flex-col gap-1">
                     <div className="flex items-center gap-3">
-                      <span className="font-mono text-sm font-semibold text-white">{selectedDeployment.id}</span>
+                      <span className="font-mono text-sm font-semibold text-white">
+                        {selectedDeployment.id}
+                      </span>
                       {renderBadge(selectedDeployment.status)}
                     </div>
                     <span className="text-xs text-slate-400 font-mono">
@@ -445,12 +459,16 @@ export function App() {
                   <div>
                     <span className="text-slate-500 block">Commit SHA</span>
                     <span className="font-mono text-slate-300">
-                      {selectedDeployment.commit_sha ? selectedDeployment.commit_sha.slice(0, 10) : '—'}
+                      {selectedDeployment.commit_sha
+                        ? selectedDeployment.commit_sha.slice(0, 10)
+                        : '—'}
                     </span>
                   </div>
                   <div>
                     <span className="text-slate-500 block">Output Directory</span>
-                    <span className="font-mono text-slate-300">{selectedDeployment.output_dir || '—'}</span>
+                    <span className="font-mono text-slate-300">
+                      {selectedDeployment.output_dir || '—'}
+                    </span>
                   </div>
                   <div>
                     <span className="text-slate-500 block">Created At</span>
@@ -564,7 +582,9 @@ export function App() {
             <div className="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden shadow-sm">
               <div className="px-5 py-3.5 border-b border-slate-800 flex items-center justify-between">
                 <h3 className="text-sm font-semibold text-slate-200">Recent Deployments</h3>
-                <span className="text-xs text-slate-400 font-mono">{deployments.length} deployments</span>
+                <span className="text-xs text-slate-400 font-mono">
+                  {deployments.length} deployments
+                </span>
               </div>
 
               {deployments.length === 0 ? (
@@ -614,9 +634,14 @@ export function App() {
                           <td className="px-5 py-3.5 text-slate-400">
                             {new Date(d.created_at).toLocaleTimeString()}
                           </td>
-                          <td className="px-5 py-3.5 text-right font-sans" onClick={(e) => e.stopPropagation()}>
+                          <td
+                            className="px-5 py-3.5 text-right font-sans"
+                            onClick={(e) => e.stopPropagation()}
+                          >
                             <div className="flex items-center justify-end gap-2">
-                              {['queued', 'cloning', 'building', 'uploading'].includes(d.status) && (
+                              {['queued', 'cloning', 'building', 'uploading'].includes(
+                                d.status
+                              ) && (
                                 <button
                                   onClick={() => handleCancel(d.id)}
                                   className="text-[11px] bg-red-950 hover:bg-red-900 text-red-400 border border-red-800 px-2 py-1 rounded transition"

@@ -1,10 +1,10 @@
 # Security Architecture & Threat Model
 
-DeployService runs untrusted user-submitted code in strictly isolated, ephemeral Docker sandbox containers. This document details the defense-in-depth architecture, threat model, and known limitations.
+DeployService runs untrusted user-submitted code in strictly isolated, ephemeral Docker sandbox containers. This document details the defense-in-depth architecture, threat model, and honest known limitations.
 
 ---
 
-## 1. Container Sandbox Isolation (Phase 3)
+## 1. Container Sandbox Isolation
 
 Untrusted repository builds (`git clone`, `npm install`, `npm run build`) execute inside throwaway sibling containers created from an immutable, non-root builder image (`deployservice-builder:latest`).
 
@@ -12,9 +12,9 @@ Untrusted repository builds (`git clone`, `npm install`, `npm run build`) execut
 
 Every build container is enforced with:
 
-- **Memory & Swap Cgroup Limits**: Hard limit of `512 MB` RAM with `MemorySwap: 512 MB` (swap equals memory, ensuring swap is disabled). Memory bombs are terminated by the Linux kernel cgroup OOM killer (`state.OOMKilled`).
-- **CPU Quota**: `NanoCPUs: 1_000_000_000` (capped at 1 CPU core).
-- **Process Table Limit**: `PidsLimit: 100` (fork bombs are trapped and fail with `Resource temporarily unavailable`, keeping the host unaffected).
+- **Memory & Swap Cgroup Limits**: Hard limit of `512 MB` RAM with `MemorySwap: 512 MB` (swap equals memory, ensuring swap is disabled). Memory exhaustion triggers the Linux kernel cgroup OOM killer (`state.OOMKilled`), immediately terminating the container and updating deployment status to `failed`.
+- **CPU Quota**: `NanoCPUs: 1_000_000_000` (strictly capped at 1.0 vCPU core).
+- **Process Table Limit**: `PidsLimit: 100` (fork bombs are trapped by the kernel process cgroup and fail with `Resource temporarily unavailable`, keeping the host unaffected).
 - **Non-Root Execution**: Runs under unprivileged user `builduser` (UID `10001:10001`).
 - **Capabilities Dropped**: `CapDrop: ["ALL"]` (drops all Linux capabilities including raw socket creation, sysadmin operations, and chown).
 - **Privilege Escalation Blocked**: `SecurityOpt: ["no-new-privileges:true"]` prevents setuid/setgid binaries from acquiring elevated privileges.
@@ -23,7 +23,7 @@ Every build container is enforced with:
   - Ephemeral per-build disk volume (`deployservice-vol-<id>`) mounted at `/build`.
   - Zero host filesystem bind mounts.
   - Temporary in-memory `/tmp` filesystem mounted as `rw,noexec,nosuid,size=64m`.
-- **Docker Socket Isolation**: `/var/run/docker.sock` is **NEVER** mounted inside build containers. Only the internal worker service has Docker socket access.
+- **Docker Socket Isolation**: `/var/run/docker.sock` is **NEVER** mounted inside build containers. Only the worker daemon receives the Docker socket.
 - **Wall-Clock Timeout**: Enforces a strict 5-minute timeout. If exceeded, the worker forcefully kills the container and marks the deployment as `timed_out`.
 - **Log Flood Protection**: Log output is buffered in memory up to a 2 MB ceiling. Subsequent bytes are drained and discarded with a truncation warning (`[logs truncated: exceeded 2MB limit]`), preventing stdout buffer deadlocks or memory exhaustion.
 
@@ -33,17 +33,8 @@ Every build container is enforced with:
 
 - **Dedicated Build Bridge Network**: Build containers run on `deployservice-build-net`.
 - **Internal Service Segregation**: Internal database and cache services (`postgres`, `redis`, `minio`) run on the compose network (`deployservice-network`). Containers on `deployservice-build-net` cannot resolve or reach these services by hostname (NXDOMAIN).
-- **Loopback Interface Binding (127.0.0.1)**: Every published port across `docker-compose.yml` (API 3000, Router 8080, Web 5173) and `docker-compose.dev.yml` (Postgres 5432, Redis 6379, MinIO 9000/9001) is strictly bound to `127.0.0.1`. Without this explicit loopback constraint, Docker would bind ports to `0.0.0.0` by default, making these services and development databases reachable across the entire local area network (LAN).
-- **Unpublished Internal Ports**: In the default `docker-compose.yml`, internal ports for `postgres`, `redis`, and `minio` are **NOT published** to the host interface at all. Development port mappings are moved to `docker-compose.dev.yml`.
-
-### Known Network Limitations & Dev Overlay Differences
-
-1. **Outbound Internet Egress**: Build containers require outbound internet access to fetch public git repositories from `github.com` and npm dependencies from `registry.npmjs.org`. Positive control canary tests verify outbound access during audit tests.
-2. **Host Gateway Reachability**: Standard Docker bridge networking routes packets to the Docker host's gateway interface (dynamically determined from `/proc/net/route`, typically `172.18.0.1` or `172.19.0.1`, or host gateway).
-3. **Loopback Protection vs Host Gateway**: Because published ports are explicitly bound to `127.0.0.1` on the host, they are only accessible from the host itself and are not exposed to external LAN interfaces.
-4. **Dev Overlay Difference**:
-   - **Production (default `docker-compose.yml`)**: Internal ports (`postgres:5432`, `redis:6379`, `minio:9000`, `minio:9001`) are unmapped from the host and strictly unreachable by service name or host gateway IP.
-   - **Development (`docker-compose.dev.yml`)**: Internal ports are published to `127.0.0.1` on the host for local developer CLI/GUI access. When the dev overlay is enabled, isolation against the host gateway IP on these ports is **not guaranteed** by design because Docker forwards host traffic. Production deployments must not run with the dev overlay.
+- **Loopback Interface Binding (127.0.0.1)**: Every published port across `docker-compose.yml` (API 3000, Router 8080, Web 5173) and `docker-compose.dev.yml` (Postgres 5432, Redis 6379, MinIO 9000/9001) is strictly bound to `127.0.0.1`. Without this explicit loopback constraint, Docker would bind ports to `0.0.0.0` by default, making these services reachable across the local area network (LAN).
+- **Unpublished Internal Ports**: In the default `docker-compose.yml`, internal ports for `postgres`, `redis`, and `minio` are **NOT published** to the host interface. Development port mappings are confined to `docker-compose.dev.yml`.
 
 ---
 
@@ -69,16 +60,30 @@ Artifacts are extracted directly from the container's volume via Docker Engine A
 Static assets served via `http://<id>.localhost:8080` are protected against path traversal attacks (`..`, `%2e%2e`, null bytes):
 
 - Raw request URLs are intercepted before framework normalization.
-- Subdomains are validated against the 128-bit deployment ID format (`^d-[a-f0-9]{32}$`).
+- Subdomains are validated against the 128-bit deployment ID format (`^d-[a-f0-9]{32}$`) or project ID format (`^prj_[a-f0-9]{12}$`).
 - Path traversal sequences, encoded traversal attempts, and null bytes return HTTP 400 Bad Request.
 
 ---
 
-## 6. Authentication, Capability URLs, and Residual API Reachability Risk
+## 6. Honest Known Limitations & Threat Model Analysis
 
-- **API Key Protection**: Administrative actions (`POST /deployments`, `GET /deployments` listing, and cancellation) require a pre-shared `API_KEY` passed via `x-api-key` header or `Authorization: Bearer <key>`.
-- **128-Bit Capability IDs**: `GET /deployments/:id` and `/logs` are capability-based URLs indexed by 128-bit cryptographically random tokens (`^d-[a-f0-9]{32}$`).
-- **Residual Risk & Containment**:
-  - _Current State_: As documented in Section 2, build containers can route to published ports (`3000` API, `8080` Router) on the Docker host gateway IP.
-  - _Threat Assessment_: A malicious build script inside a container can connect to `http://<host-gateway>:3000`. However, because `POST /deployments` and `GET /deployments` require the secret `API_KEY` (which is never injected into the build container), the container cannot trigger arbitrary builds or enumerate other users' deployments. Because deployment IDs are generated with 128 bits of cryptographic entropy, guessing other active or past deployment IDs is mathematically infeasible ($2^{128}$ search space).
-  - _Permanent Fix_: A dedicated internal forward egress proxy will decouple build containers from direct host gateway routing entirely.
+1. **Builds Can Reach Published API, Router, and Internet**:
+   - _Behavior_: Build containers connect to the public internet to fetch git repositories and npm dependencies. Under Docker Desktop (macOS) and standard Linux bridge networking, packets routed to the host gateway IP (`172.x.0.1` or host gateway) can reach host-published ports (`127.0.0.1:3000` API and `127.0.0.1:8080` Router).
+   - _Mitigation_: The build container does not possess the `API_KEY`. Without `API_KEY`, requests to `POST /deployments`, `GET /deployments` (listing), cancellation, and rollback are rejected with 401 Unauthorized. A hostile build cannot enumerate or trigger deployments.
+   - _Future Work_: Implement a dedicated forward egress proxy on an isolated internal network that enforces domain allowlisting (`github.com`, `registry.npmjs.org`) and drops all traffic directed at host/private IP ranges.
+
+2. **Unauthenticated Capability URLs**:
+   - _Behavior_: `GET /deployments/:id` (status) and `GET /deployments/:id/logs` (live/archived logs) are capability-based URLs that do not require an `API_KEY` header.
+   - _Mitigation_: Deployment IDs are 128-bit lowercase hex values (`d-[a-f0-9]{32}`) generated via `crypto.randomBytes(16)`. With $2^{128}$ possible values, brute-force enumeration is mathematically infeasible. However, anyone who possesses the URL can inspect build logs.
+
+3. **Best-Effort Log Redaction**:
+   - _Behavior_: Build output is piped through a regex-based stream redactor before being published to Redis Streams. It masks common token formats (GitHub PATs `ghp_`, AWS access keys `AKIA`, GitLab tokens `glpat-`, Bearer tokens, RSA/EC private keys, and preconfigured secrets).
+   - _Limitation_: Regex redaction is inherently best-effort. Custom tokens, arbitrary password strings, or fragmented secrets split across stream chunks cannot be guaranteed to be 100% redacted. Developers should never commit secrets to repositories built on the platform.
+
+4. **Single-Worker Assumptions**:
+   - _Behavior_: The worker crash recovery mechanism (`recoverStuckDeployments`) checks in-memory `activeDeployments` and BullMQ queue state to avoid reaping active builds.
+   - _Limitation_: In a multi-worker setup across different machines, local memory sets are not shared. Distributed leases (e.g., Redlock or Postgres advisory row locks with worker heartbeats) would be required to prevent a worker from reaping builds running on a healthy peer.
+
+5. **Docker Desktop Test Environment**:
+   - _Behavior_: Audit tests and resource containment benchmarks were evaluated on macOS running Docker Desktop (using Apple Hypervisor and the LinuxKit VM).
+   - _Observation_: Networking behavior (such as `host.docker.internal` resolution and host-gateway forwarding) exhibits slight differences compared to bare-metal Linux with native `iptables` and cgroups v2.
