@@ -7,6 +7,7 @@ import {
   checkStorageHealth,
   createDeployment,
   createOrGetProject,
+  getConfig,
   getDeployment,
   listDeployments,
   logger,
@@ -15,13 +16,21 @@ import {
 import { getDeploymentQueue } from './queue.js';
 
 export function buildServer(): FastifyInstance {
+  const config = getConfig();
   const fastify = Fastify({
     logger: false,
     disableRequestLogging: true,
   });
 
   fastify.register(cors, {
-    origin: '*',
+    origin: (origin, cb) => {
+      // Allow requests with no origin (e.g. curl, server-to-server) or matching FRONTEND_URL
+      if (!origin || origin === config.FRONTEND_URL) {
+        cb(null, true);
+        return;
+      }
+      cb(null, false);
+    },
   });
 
   fastify.register(rateLimit, {

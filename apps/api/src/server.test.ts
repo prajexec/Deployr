@@ -160,4 +160,59 @@ describe('API Server', () => {
       await app.close();
     });
   });
+
+  describe('CORS policy', () => {
+    it('sets Access-Control-Allow-Origin for the configured FRONTEND_URL', async () => {
+      vi.spyOn(shared, 'checkDbHealth').mockResolvedValue(true);
+      vi.spyOn(shared, 'checkRedisHealth').mockResolvedValue(true);
+      vi.spyOn(shared, 'checkStorageHealth').mockResolvedValue(true);
+
+      const app = buildServer();
+      const res = await app.inject({
+        method: 'GET',
+        url: '/healthz',
+        headers: {
+          origin: 'http://localhost:5173',
+        },
+      });
+
+      expect(res.statusCode).toBe(200);
+      expect(res.headers['access-control-allow-origin']).toBe('http://localhost:5173');
+      await app.close();
+    });
+
+    it('rejects cross-origin requests from untrusted origins', async () => {
+      vi.spyOn(shared, 'checkDbHealth').mockResolvedValue(true);
+      vi.spyOn(shared, 'checkRedisHealth').mockResolvedValue(true);
+      vi.spyOn(shared, 'checkStorageHealth').mockResolvedValue(true);
+
+      const app = buildServer();
+      const res = await app.inject({
+        method: 'GET',
+        url: '/healthz',
+        headers: {
+          origin: 'http://evil.com',
+        },
+      });
+
+      expect(res.headers['access-control-allow-origin']).toBeUndefined();
+      await app.close();
+    });
+
+    it('allows requests with no Origin header (CLI / internal)', async () => {
+      vi.spyOn(shared, 'checkDbHealth').mockResolvedValue(true);
+      vi.spyOn(shared, 'checkRedisHealth').mockResolvedValue(true);
+      vi.spyOn(shared, 'checkStorageHealth').mockResolvedValue(true);
+
+      const app = buildServer();
+      const res = await app.inject({
+        method: 'GET',
+        url: '/healthz',
+      });
+
+      expect(res.statusCode).toBe(200);
+      expect(res.headers['access-control-allow-origin']).toBeUndefined();
+      await app.close();
+    });
+  });
 });

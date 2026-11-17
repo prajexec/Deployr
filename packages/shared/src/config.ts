@@ -22,6 +22,7 @@ const configSchema = z.object({
   BUILD_TIMEOUT_MS: z.coerce.number().default(300000),
   MAX_LOG_BYTES: z.coerce.number().default(5242880),
   MAX_REPO_SIZE_MB: z.coerce.number().default(100),
+  FRONTEND_URL: z.string().default('http://localhost:5173'),
 });
 
 export type Config = z.infer<typeof configSchema>;
