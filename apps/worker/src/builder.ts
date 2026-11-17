@@ -45,12 +45,31 @@ export function getMimeType(filePath: string): string {
 
 let dockerInstance: Docker | null = null;
 export const activeDeployments = new Set<string>();
+export const cancelledDeployments = new Set<string>();
 
 export function getDockerClient(): Docker {
   if (!dockerInstance) {
     dockerInstance = new Docker({ socketPath: '/var/run/docker.sock' });
   }
   return dockerInstance;
+}
+
+export async function cancelActiveBuild(
+  deploymentId: string,
+  docker: Docker = getDockerClient()
+): Promise<boolean> {
+  cancelledDeployments.add(deploymentId);
+  logger.info({ deploymentId }, 'Cancelling active build container');
+
+  const containerName = `deployservice-build-${deploymentId}`;
+  try {
+    const ctr = docker.getContainer(containerName);
+    await ctr.kill().catch(() => {});
+    return true;
+  } catch (err: any) {
+    logger.warn({ deploymentId, err: err.message }, 'Failed killing container during cancel');
+    return false;
+  }
 }
 
 export function setDockerClient(client: Docker | null) {
@@ -560,6 +579,13 @@ export async function executeBuild(
 
     const errorMessage = err.message || 'Build failed unexpectedly';
     const isTimeout = isTimedOut || errorMessage.toLowerCase().includes('timed out');
+    const isCancelled = cancelledDeployments.has(deploymentId);
+
+    const terminalStatus = isCancelled
+      ? DeploymentStatus.CANCELLED
+      : isTimeout
+        ? DeploymentStatus.TIMED_OUT
+        : DeploymentStatus.FAILED;
 
     // Best-effort failure log archive upload
     try {
@@ -573,14 +599,10 @@ export async function executeBuild(
     }
 
     try {
-      await updateDeploymentStatus(
-        deploymentId,
-        isTimeout ? DeploymentStatus.TIMED_OUT : DeploymentStatus.FAILED,
-        {
-          error_message: errorMessage,
-          finished_at: new Date(),
-        }
-      );
+      await updateDeploymentStatus(deploymentId, terminalStatus, {
+        error_message: isCancelled ? 'Deployment cancelled by user' : errorMessage,
+        finished_at: new Date(),
+      });
     } catch (updateErr: any) {
       logger.error(
         { deploymentId, updateErr: updateErr.message },
@@ -588,11 +610,19 @@ export async function executeBuild(
       );
     }
 
-    await logWriter?.finish(isTimeout ? 'timed_out' : 'failed', waitResult?.StatusCode ?? 1);
+    await logWriter?.finish(
+      terminalStatus,
+      isCancelled ? 130 : waitResult?.StatusCode ?? 1
+    );
+
+    if (isCancelled) {
+      throw new UserBuildError('Deployment cancelled by user', 130);
+    }
 
     throw err;
   } finally {
     activeDeployments.delete(deploymentId);
+    cancelledDeployments.delete(deploymentId);
 
     if (timeoutTimer) {
       clearTimeout(timeoutTimer);

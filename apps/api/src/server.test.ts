@@ -289,6 +289,95 @@ describe('API Server', () => {
     });
   });
 
+  describe('POST /deployments/:id/cancel', () => {
+    it('requires API key authentication', async () => {
+      const app = buildServer();
+      const res = await app.inject({
+        method: 'POST',
+        url: `/deployments/${VALID_ID}/cancel`,
+      });
+      expect(res.statusCode).toBe(401);
+      await app.close();
+    });
+
+    it('rejects malformed deployment IDs with 400', async () => {
+      const app = buildServer();
+      const res = await app.inject({
+        method: 'POST',
+        url: '/deployments/d-invalid/cancel',
+        headers: { 'x-api-key': testApiKey },
+      });
+      expect(res.statusCode).toBe(400);
+      await app.close();
+    });
+
+    it('returns 404 when deployment does not exist', async () => {
+      vi.spyOn(shared, 'getDeployment').mockResolvedValue(null);
+      const app = buildServer();
+      const res = await app.inject({
+        method: 'POST',
+        url: `/deployments/${VALID_ID}/cancel`,
+        headers: { 'x-api-key': testApiKey },
+      });
+      expect(res.statusCode).toBe(404);
+      await app.close();
+    });
+
+    it('returns 409 Conflict when deployment is already in terminal state', async () => {
+      vi.spyOn(shared, 'getDeployment').mockResolvedValue({
+        id: VALID_ID,
+        project_id: 'prj_test',
+        status: 'deployed',
+      } as any);
+
+      const app = buildServer();
+      const res = await app.inject({
+        method: 'POST',
+        url: `/deployments/${VALID_ID}/cancel`,
+        headers: { 'x-api-key': testApiKey },
+      });
+
+      expect(res.statusCode).toBe(409);
+      expect(JSON.parse(res.body).error).toMatch(/already in terminal state/);
+      await app.close();
+    });
+
+    it('cancels a queued deployment and removes it from BullMQ', async () => {
+      vi.spyOn(shared, 'getDeployment').mockResolvedValue({
+        id: VALID_ID,
+        project_id: 'prj_test',
+        status: 'queued',
+      } as any);
+
+      const mockJob = {
+        data: { deploymentId: VALID_ID },
+        remove: vi.fn().mockResolvedValue(undefined),
+      };
+      vi.spyOn(queueModule, 'getDeploymentQueue').mockReturnValue({
+        getJobs: vi.fn().mockResolvedValue([mockJob]),
+      } as any);
+
+      vi.spyOn(shared, 'updateDeploymentStatus').mockResolvedValue({
+        id: VALID_ID,
+        status: 'cancelled',
+      } as any);
+
+      const app = buildServer();
+      const res = await app.inject({
+        method: 'POST',
+        url: `/deployments/${VALID_ID}/cancel`,
+        headers: { 'x-api-key': testApiKey },
+      });
+
+      expect(res.statusCode).toBe(200);
+      const body = JSON.parse(res.body);
+      expect(body.id).toBe(VALID_ID);
+      expect(body.status).toBe('cancelled');
+      expect(mockJob.remove).toHaveBeenCalled();
+      await app.close();
+    });
+  });
+
   describe('GET /deployments/:id/logs (SSE & Historical Logs)', () => {
     it('rejects malformed deployment IDs with 400', async () => {
       const app = buildServer();

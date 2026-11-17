@@ -1,6 +1,6 @@
 import { Worker } from 'bullmq';
 import { getConfig, getRedisClient, logger } from '@deployservice/shared';
-import { ensureBuildNetwork, reapOrphanedContainers } from './builder.js';
+import { cancelActiveBuild, ensureBuildNetwork, reapOrphanedContainers } from './builder.js';
 import { processDeploymentJob } from './processor.js';
 import { recoverStuckDeployments } from './recovery.js';
 
@@ -11,6 +11,7 @@ logger.info({ concurrency: config.MAX_CONCURRENT_BUILDS }, 'Starting deployment 
 
 let worker: Worker | null = null;
 let recoveryInterval: NodeJS.Timeout | null = null;
+let cancelSubscriber: any = null;
 
 async function bootstrap() {
   // 1. Clean up orphaned containers/volumes from previous crashes
@@ -79,6 +80,21 @@ async function bootstrap() {
       logger.warn({ err: err.message }, 'Error in periodic stuck deployment recovery');
     });
   }, 60 * 1000);
+
+  // 4. Subscribe to cancellation channel
+  try {
+    cancelSubscriber = redis.duplicate();
+    await cancelSubscriber.subscribe('deployservice:cancel');
+    cancelSubscriber.on('message', async (channel: string, deploymentId: string) => {
+      if (channel === 'deployservice:cancel') {
+        logger.info({ deploymentId }, 'Received cancellation pub/sub message');
+        await cancelActiveBuild(deploymentId);
+      }
+    });
+    logger.info('Worker subscribed to cancellation channel');
+  } catch (err: any) {
+    logger.warn({ err: err.message }, 'Failed setting up cancellation subscriber');
+  }
 }
 
 bootstrap().catch((err) => {
@@ -92,6 +108,10 @@ const shutdown = async (signal: string) => {
     if (recoveryInterval) {
       clearInterval(recoveryInterval);
       recoveryInterval = null;
+    }
+    if (cancelSubscriber) {
+      await cancelSubscriber.quit();
+      cancelSubscriber = null;
     }
     if (worker) {
       await worker.close();
