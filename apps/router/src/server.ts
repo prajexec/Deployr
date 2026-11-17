@@ -8,6 +8,7 @@ import {
   DeploymentStatus,
   getDeployment,
   getObject,
+  isValidDeploymentId,
   logger,
 } from '@deployservice/shared';
 
@@ -16,23 +17,20 @@ export interface RouterOptions {
 }
 
 /**
- * Validates subdomains against RFC 1035: ^[a-z0-9-]{1,63}$
+ * Validates subdomains against the 128-bit deployment ID format: ^d-[a-f0-9]{32}$
  */
 export function extractAndValidateSubdomain(hostHeader: string | undefined): string | null {
   if (!hostHeader) return null;
 
-  // Strip port if present: "d-123.localhost:8080" -> "d-123.localhost"
+  // Strip port if present: "d-0123456789abcdef0123456789abcdef.localhost:8080" -> "d-..."
   const hostWithoutPort = hostHeader.split(':')[0];
 
-  // Split subdomain from domain: e.g. "d-123.localhost" -> ["d-123", "localhost"]
+  // Split subdomain from domain: e.g. "d-...localhost" -> ["d-...", "localhost"]
   const parts = hostWithoutPort.split('.');
   if (parts.length < 2) return null;
 
   const subdomain = parts[0];
-  // Strict regex: lowercase alphanumeric and hyphens only, 1-63 chars
-  const subdomainRegex = /^[a-z0-9-]{1,63}$/;
-
-  if (!subdomainRegex.test(subdomain) || subdomain.startsWith('-') || subdomain.endsWith('-')) {
+  if (!isValidDeploymentId(subdomain)) {
     return null;
   }
 

@@ -6,9 +6,8 @@ import { getDb } from './index.js';
 import { DeploymentRecord, deployments, ProjectRecord, projects } from './schema.js';
 
 export function generateDeploymentId(): string {
-  // Generates 14 chars: 'd-' + 12 lowercase hex characters (e.g. 'd-4a8f9c1b2e3d')
-  // Fully adheres to RFC 1035 subdomain regex: ^[a-z0-9-]{1,63}$
-  return `d-${crypto.randomBytes(6).toString('hex')}`;
+  // Generates 34 chars: 'd-' + 32 lowercase hex characters (128-bit cryptographically secure entropy)
+  return `d-${crypto.randomBytes(16).toString('hex')}`;
 }
 
 export function generateProjectId(): string {

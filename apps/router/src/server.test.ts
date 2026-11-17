@@ -5,14 +5,18 @@ import { buildRouter, extractAndValidateSubdomain, sanitizePath } from './server
 
 describe('extractAndValidateSubdomain', () => {
   it('extracts valid subdomains', () => {
-    expect(extractAndValidateSubdomain('d-123456.localhost:8080')).toBe('d-123456');
-    expect(extractAndValidateSubdomain('site-1.example.com')).toBe('site-1');
-    expect(extractAndValidateSubdomain('sub.localhost')).toBe('sub');
+    expect(extractAndValidateSubdomain('d-0123456789abcdef0123456789abcdef.localhost:8080')).toBe(
+      'd-0123456789abcdef0123456789abcdef'
+    );
+    expect(extractAndValidateSubdomain('d-ffffffffffffffffffffffffffffffff.example.com')).toBe(
+      'd-ffffffffffffffffffffffffffffffff'
+    );
   });
 
   it('rejects invalid or missing subdomains', () => {
     expect(extractAndValidateSubdomain(undefined)).toBeNull();
     expect(extractAndValidateSubdomain('localhost:8080')).toBeNull();
+    expect(extractAndValidateSubdomain('d-short.localhost')).toBeNull();
     expect(extractAndValidateSubdomain('-invalid.localhost')).toBeNull();
     expect(extractAndValidateSubdomain('invalid-.localhost')).toBeNull();
     expect(extractAndValidateSubdomain('UPPER.localhost')).toBeNull();
@@ -60,7 +64,7 @@ describe('Router Server Request Routing', () => {
 
   it('returns 404 when deployment is not deployed', async () => {
     vi.spyOn(shared, 'getDeployment').mockResolvedValue({
-      id: 'd-1234567890ab',
+      id: 'd-0123456789abcdef0123456789abcdef',
       project_id: 'prj_test',
       status: 'building',
       commit_sha: null,
@@ -75,7 +79,7 @@ describe('Router Server Request Routing', () => {
     const res = await app.inject({
       method: 'GET',
       url: '/',
-      headers: { host: 'd-1234567890ab.localhost:8080' },
+      headers: { host: 'd-0123456789abcdef0123456789abcdef.localhost:8080' },
     });
 
     expect(res.statusCode).toBe(404);
@@ -84,7 +88,7 @@ describe('Router Server Request Routing', () => {
 
   it('serves static file and sets correct headers', async () => {
     vi.spyOn(shared, 'getDeployment').mockResolvedValue({
-      id: 'd-test123',
+      id: 'd-0123456789abcdef0123456789abcdef',
       project_id: 'prj_test',
       status: 'deployed',
       commit_sha: 'sha123',
@@ -105,7 +109,7 @@ describe('Router Server Request Routing', () => {
     const res = await app.inject({
       method: 'GET',
       url: '/assets/app-hash123.js',
-      headers: { host: 'd-test123.localhost:8080' },
+      headers: { host: 'd-0123456789abcdef0123456789abcdef.localhost:8080' },
     });
 
     expect(res.statusCode).toBe(200);
@@ -117,7 +121,7 @@ describe('Router Server Request Routing', () => {
 
   it('provides SPA fallback to index.html for extensionless paths', async () => {
     vi.spyOn(shared, 'getDeployment').mockResolvedValue({
-      id: 'd-test123',
+      id: 'd-0123456789abcdef0123456789abcdef',
       project_id: 'prj_test',
       status: 'deployed',
       commit_sha: 'sha123',
@@ -129,7 +133,7 @@ describe('Router Server Request Routing', () => {
     });
 
     vi.spyOn(shared, 'getObject').mockImplementation(async (key: string) => {
-      if (key === 'deployments/d-test123/index.html') {
+      if (key === 'deployments/d-0123456789abcdef0123456789abcdef/index.html') {
         return {
           Body: Readable.from(['<!DOCTYPE html><html><body>SPA Root</body></html>']),
           ContentType: 'text/html',
@@ -144,7 +148,7 @@ describe('Router Server Request Routing', () => {
     const res = await app.inject({
       method: 'GET',
       url: '/dashboard/settings',
-      headers: { host: 'd-test123.localhost:8080' },
+      headers: { host: 'd-0123456789abcdef0123456789abcdef.localhost:8080' },
     });
 
     expect(res.statusCode).toBe(200);
@@ -156,7 +160,7 @@ describe('Router Server Request Routing', () => {
 
   it('returns real 404 for missing asset files (with extensions)', async () => {
     vi.spyOn(shared, 'getDeployment').mockResolvedValue({
-      id: 'd-test123',
+      id: 'd-0123456789abcdef0123456789abcdef',
       project_id: 'prj_test',
       status: 'deployed',
       commit_sha: 'sha123',
@@ -177,7 +181,7 @@ describe('Router Server Request Routing', () => {
     const res = await app.inject({
       method: 'GET',
       url: '/assets/missing-asset.png',
-      headers: { host: 'd-test123.localhost:8080' },
+      headers: { host: 'd-0123456789abcdef0123456789abcdef.localhost:8080' },
     });
 
     expect(res.statusCode).toBe(404);
@@ -187,7 +191,7 @@ describe('Router Server Request Routing', () => {
 
   it('rejects path traversal attempts with 400', async () => {
     vi.spyOn(shared, 'getDeployment').mockResolvedValue({
-      id: 'd-test123',
+      id: 'd-0123456789abcdef0123456789abcdef',
       project_id: 'prj_test',
       status: 'deployed',
       commit_sha: 'sha123',
@@ -202,7 +206,7 @@ describe('Router Server Request Routing', () => {
     const res = await app.inject({
       method: 'GET',
       url: '/file%00.txt',
-      headers: { host: 'd-test123.localhost:8080' },
+      headers: { host: 'd-0123456789abcdef0123456789abcdef.localhost:8080' },
     });
 
     expect(res.statusCode).toBe(400);

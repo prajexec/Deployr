@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { isValidSubdomain, validateRepoUrl } from './validation.js';
+import { isValidDeploymentId, isValidSubdomain, validateRepoUrl } from './validation.js';
 
 describe('validateRepoUrl', () => {
   it('accepts valid GitHub repository URLs', () => {
@@ -109,21 +109,20 @@ describe('validateRepoUrl', () => {
   });
 });
 
-describe('isValidSubdomain', () => {
-  it('accepts valid RFC 1035 subdomains', () => {
-    expect(isValidSubdomain('d-1234567890ab')).toBe(true);
-    expect(isValidSubdomain('my-app')).toBe(true);
-    expect(isValidSubdomain('a')).toBe(true);
-    expect(isValidSubdomain('deploy-123-abc')).toBe(true);
+describe('isValidDeploymentId & isValidSubdomain', () => {
+  it('accepts valid 128-bit hex deployment IDs', () => {
+    expect(isValidDeploymentId('d-0123456789abcdef0123456789abcdef')).toBe(true);
+    expect(isValidSubdomain('d-0123456789abcdef0123456789abcdef')).toBe(true);
+    expect(isValidDeploymentId('d-ffffffffffffffffffffffffffffffff')).toBe(true);
   });
 
-  it('rejects invalid subdomains', () => {
-    expect(isValidSubdomain('')).toBe(false);
-    expect(isValidSubdomain('-start-hyphen')).toBe(false);
-    expect(isValidSubdomain('end-hyphen-')).toBe(false);
-    expect(isValidSubdomain('UPPERCASE')).toBe(false);
-    expect(isValidSubdomain('has_underscore')).toBe(false);
-    expect(isValidSubdomain('has.dot')).toBe(false);
-    expect(isValidSubdomain('a'.repeat(64))).toBe(false);
+  it('rejects invalid deployment IDs', () => {
+    expect(isValidDeploymentId('')).toBe(false);
+    expect(isValidDeploymentId('d-short')).toBe(false);
+    expect(isValidDeploymentId('d-0123456789abcdef0123456789abcde')).toBe(false); // 31 chars
+    expect(isValidDeploymentId('d-0123456789abcdef0123456789abcdef0')).toBe(false); // 33 chars
+    expect(isValidDeploymentId('0123456789abcdef0123456789abcdef')).toBe(false); // missing 'd-'
+    expect(isValidDeploymentId('d-0123456789ABCDEF0123456789ABCDEF')).toBe(false); // uppercase
+    expect(isValidDeploymentId('d-0123456789abcdef0123456789abcdeg')).toBe(false); // non-hex 'g'
   });
 });

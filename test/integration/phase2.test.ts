@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   DeploymentRecord,
   DeploymentStatus,
+  generateDeploymentId,
   getDeployment,
   updateDeploymentStatus,
 } from '@deployservice/shared';
@@ -77,7 +78,7 @@ describe('Phase 2 Integration: End-to-End Build and Router Flow', { timeout: 300
   });
 
   it('successfully builds fixture repo, publishes to storage, and serves via router', async () => {
-    const deploymentId = 'd-integration1';
+    const deploymentId = generateDeploymentId();
 
     // Seed deployment in 'queued' state
     deploymentsStore.set(deploymentId, {
@@ -156,7 +157,7 @@ describe('Phase 2 Integration: End-to-End Build and Router Flow', { timeout: 300
   });
 
   it('marks deployment as failed on build failure and router refuses to serve it', async () => {
-    const deploymentId = 'd-failing1';
+    const deploymentId = generateDeploymentId();
 
     deploymentsStore.set(deploymentId, {
       id: deploymentId,
