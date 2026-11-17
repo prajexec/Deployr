@@ -69,5 +69,16 @@ Artifacts are extracted directly from the container's volume via Docker Engine A
 Static assets served via `http://<id>.localhost:8080` are protected against path traversal attacks (`..`, `%2e%2e`, null bytes):
 
 - Raw request URLs are intercepted before framework normalization.
-- Subdomains are validated against RFC 1035 (`^[a-z0-9-]{1,63}$`).
+- Subdomains are validated against the 128-bit deployment ID format (`^d-[a-f0-9]{32}$`).
 - Path traversal sequences, encoded traversal attempts, and null bytes return HTTP 400 Bad Request.
+
+---
+
+## 6. Authentication, Capability URLs, and Residual API Reachability Risk
+
+- **API Key Protection**: Administrative actions (`POST /deployments`, `GET /deployments` listing, and cancellation) require a pre-shared `API_KEY` passed via `x-api-key` header or `Authorization: Bearer <key>`.
+- **128-Bit Capability IDs**: `GET /deployments/:id` and `/logs` are capability-based URLs indexed by 128-bit cryptographically random tokens (`^d-[a-f0-9]{32}$`).
+- **Residual Risk & Containment**:
+  - _Current State_: As documented in Section 2, build containers can route to published ports (`3000` API, `8080` Router) on the Docker host gateway IP.
+  - _Threat Assessment_: A malicious build script inside a container can connect to `http://<host-gateway>:3000`. However, because `POST /deployments` and `GET /deployments` require the secret `API_KEY` (which is never injected into the build container), the container cannot trigger arbitrary builds or enumerate other users' deployments. Because deployment IDs are generated with 128 bits of cryptographic entropy, guessing other active or past deployment IDs is mathematically infeasible ($2^{128}$ search space).
+  - _Permanent Fix_: A dedicated internal forward egress proxy will decouple build containers from direct host gateway routing entirely.
