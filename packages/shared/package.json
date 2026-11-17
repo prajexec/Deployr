@@ -1,0 +1,33 @@
+{
+  "name": "@deployservice/shared",
+  "version": "1.0.0",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc",
+    "db:generate": "drizzle-kit generate",
+    "db:migrate": "node dist/db/migrate.js"
+  },
+  "dependencies": {
+    "@aws-sdk/client-s3": "^3.587.0",
+    "dotenv": "^16.4.5",
+    "drizzle-orm": "^0.30.10",
+    "ioredis": "^5.4.1",
+    "pg": "^8.11.5",
+    "pino": "^9.1.0",
+    "pino-pretty": "^11.1.0",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/pg": "^8.11.6",
+    "drizzle-kit": "^0.21.4",
+    "typescript": "^5.4.5"
+  }
+}
