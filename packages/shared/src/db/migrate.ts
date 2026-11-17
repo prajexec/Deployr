@@ -23,9 +23,10 @@ export async function runMigrations(): Promise<void> {
       );
     `);
 
-    // Look for migrations in src/db/migrations or dist/db/migrations or alongside this file
+    // Look for migrations in dist/db/migrations or src/db/migrations or alongside this file
     const possibleDirs = [
       path.join(__dirname, 'migrations'),
+      path.join(__dirname, '..', '..', 'src', 'db', 'migrations'),
       path.join(__dirname, '..', 'src', 'db', 'migrations'),
       path.join(__dirname, '..', 'db', 'migrations'),
     ];
