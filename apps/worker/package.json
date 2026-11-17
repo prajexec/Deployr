@@ -1,0 +1,20 @@
+{
+  "name": "@deployservice/worker",
+  "version": "1.0.0",
+  "type": "module",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js"
+  },
+  "dependencies": {
+    "@deployservice/shared": "workspace:*",
+    "bullmq": "^5.8.0",
+    "dockerode": "^4.0.2"
+  },
+  "devDependencies": {
+    "@types/dockerode": "^3.3.29",
+    "@types/node": "^20.14.0",
+    "typescript": "^5.4.5"
+  }
+}
