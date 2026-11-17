@@ -1,5 +1,6 @@
+import { UnrecoverableError } from 'bullmq';
 import { executeBuild } from './builder.js';
-import { logger } from '@deployservice/shared';
+import { logger, UserBuildError } from '@deployservice/shared';
 
 export interface DeploymentJobData {
   deploymentId: string;
@@ -21,5 +22,21 @@ export async function processDeploymentJob(
 
   // Explicitly pass only deploymentId and repoUrl; never allow job data
   // to configure BuildOptions (e.g. enableHostInternalForTest)
-  await buildExecutor(deploymentId, repoUrl);
+  try {
+    await buildExecutor(deploymentId, repoUrl);
+  } catch (err: any) {
+    if (err instanceof UserBuildError || err.isUserError) {
+      logger.warn(
+        { deploymentId, err: err.message },
+        'User build error: marked unrecoverable (no BullMQ retry)'
+      );
+      throw new UnrecoverableError(err.message);
+    }
+
+    logger.error(
+      { deploymentId, err: err.message },
+      'Infrastructure error: allowing BullMQ retry with exponential backoff'
+    );
+    throw err;
+  }
 }

@@ -6,10 +6,13 @@ import tar from 'tar-stream';
 import {
   DeploymentStatus,
   getConfig,
+  getDeployment,
   getRedisClient,
   logger,
+  setProjectCurrentDeployment,
   updateDeploymentStatus,
   uploadObject,
+  UserBuildError,
 } from '@deployservice/shared';
 import { validateAndExtractTar } from './tar-extractor.js';
 import { DeploymentLogWriter } from './stream-writer.js';
@@ -445,21 +448,19 @@ export async function executeBuild(
       logBuffer.toLowerCase().includes('invalid string length');
 
     if (isTimedOut) {
-      throw new Error(`Build timed out after ${timeoutMs / 1000} seconds`);
+      throw new UserBuildError(`Build timed out after ${timeoutMs / 1000} seconds`);
     }
 
     if (isOomKilled) {
-      throw new Error('Build exceeded memory limit (OOM killed)');
+      throw new UserBuildError('Build exceeded memory limit (OOM killed)');
     }
 
     if (waitResult.StatusCode !== 0) {
       const tailLines = logBuffer.trim().split('\n').slice(-10).join('\n');
-      const buildErr: any = new Error(
-        tailLines || `Build container exited with non-zero code ${waitResult.StatusCode}`
+      throw new UserBuildError(
+        tailLines || `Build container exited with non-zero code ${waitResult.StatusCode}`,
+        waitResult.StatusCode
       );
-      buildErr.exitCode = waitResult.StatusCode;
-      buildErr.logs = logBuffer;
-      throw buildErr;
     }
 
     // 9. Transition: building -> uploading
@@ -493,7 +494,7 @@ export async function executeBuild(
     });
 
     if (extractedFiles.length === 0) {
-      throw new Error('Build completed but output directory contained zero files.');
+      throw new UserBuildError('Build completed but output directory contained zero files.');
     }
 
     // 12. Upload files to MinIO under deployments/<id>/
@@ -529,6 +530,23 @@ export async function executeBuild(
       commit_sha: commitSha,
       output_dir: outputDir,
     });
+
+    // Point project's current_deployment_id to this newly deployed release atomically
+    try {
+      const depRecord = await getDeployment(deploymentId);
+      if (depRecord?.project_id) {
+        await setProjectCurrentDeployment(depRecord.project_id, deploymentId);
+        logger.info(
+          { projectId: depRecord.project_id, deploymentId },
+          'Atomically switched project current_deployment_id'
+        );
+      }
+    } catch (publishErr: any) {
+      logger.warn(
+        { deploymentId, err: publishErr.message },
+        'Non-fatal warning: failed to update project current_deployment_id pointer'
+      );
+    }
 
     // 15. Write terminal end marker to Redis stream
     await logWriter?.finish('deployed', waitResult.StatusCode);
