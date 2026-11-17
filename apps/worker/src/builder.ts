@@ -52,6 +52,42 @@ export function setDockerClient(client: Docker | null) {
   dockerInstance = client;
 }
 
+export const BUILD_NETWORK_NAME = 'deployservice-build-net';
+
+/**
+ * Idempotently ensures that the dedicated build bridge network exists.
+ * If the network does not exist, it creates it with bridge driver and managed label.
+ * If concurrent workers/tests attempt creation simultaneously, 409 Conflict is safely ignored.
+ */
+export async function ensureBuildNetwork(
+  docker: Docker = getDockerClient(),
+  networkName: string = BUILD_NETWORK_NAME
+): Promise<void> {
+  try {
+    const networks = await docker.listNetworks({
+      filters: { name: [networkName] },
+    });
+    const exists = networks.some((n: any) => n.Name === networkName);
+    if (!exists) {
+      await docker.createNetwork({
+        Name: networkName,
+        Driver: 'bridge',
+        CheckDuplicate: true,
+        Labels: {
+          'deployservice.managed': 'true',
+        },
+      });
+      logger.info({ networkName }, 'Created isolated build network');
+    }
+  } catch (err: any) {
+    if (err.statusCode === 409 || err.message?.includes('already exists')) {
+      return;
+    }
+    logger.error({ err: err.message, networkName }, 'Failed ensuring build network');
+    throw err;
+  }
+}
+
 /**
  * Startup reaper: forcefully removes any orphaned build containers and volumes
  * labeled with 'deployservice.managed=true' left over from previous crashes.
@@ -199,6 +235,9 @@ export async function executeBuild(
     await updateDeploymentStatus(deploymentId, DeploymentStatus.CLONING, {
       started_at: new Date(),
     });
+
+    // Ensure dedicated build network exists before container creation
+    await ensureBuildNetwork(docker);
 
     // 2. Create isolated per-build volume
     await docker.createVolume({
