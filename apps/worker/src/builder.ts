@@ -323,6 +323,7 @@ export async function executeBuild(
 
         // Network isolation: dedicated bridge network separate from compose network
         NetworkMode: 'deployservice-build-net',
+        ExtraHosts: ['host.docker.internal:host-gateway'],
 
         // Storage: dedicated per-build volume for /build and small tmpfs for /tmp
         Binds: [`${volumeName}:/build`],
@@ -423,9 +424,12 @@ export async function executeBuild(
 
     if (waitResult.StatusCode !== 0) {
       const tailLines = logBuffer.trim().split('\n').slice(-10).join('\n');
-      throw new Error(
+      const buildErr: any = new Error(
         tailLines || `Build container exited with non-zero code ${waitResult.StatusCode}`
       );
+      buildErr.exitCode = waitResult.StatusCode;
+      buildErr.logs = logBuffer;
+      throw buildErr;
     }
 
     // 9. Transition: building -> uploading
