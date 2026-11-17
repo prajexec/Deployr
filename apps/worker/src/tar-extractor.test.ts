@@ -69,7 +69,7 @@ describe('Tar Extractor Security & Bounds Validation', () => {
         name: 'safe.txt',
         type: 'file',
         pax: { path: 'evil\0file.txt' },
-      },
+      } as any,
       'payload'
     );
     pack.finalize();

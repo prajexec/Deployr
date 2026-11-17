@@ -33,12 +33,18 @@ export PNPM_HOME=/build/.cache/pnpm
 export PATH="$PNPM_HOME:$PATH"
 export CI=true
 
-mkdir -p /build/.home /build/.cache/npm /build/.cache/yarn /build/.cache/pnpm /build/repo /tmp
+mkdir -p /build/.home /build/.cache/npm /build/.cache/yarn /build/.cache/pnpm /tmp
 
-# 3. Clone repository using -- to terminate option parsing
-echo "[builder] Cloning repository: $REPO_URL"
-git clone --depth 1 -- "$REPO_URL" /build/repo
-cd /build/repo
+# 3. Clone repository using -- to terminate option parsing (or use pre-staged repo in test fixture mode)
+if [ -d "/build/repo" ] && ([ -f "/build/repo/package.json" ] || [ -f "/build/repo/index.html" ]); then
+  echo "[builder] Using pre-staged repository in /build/repo"
+  cd /build/repo
+else
+  mkdir -p /build/repo
+  echo "[builder] Cloning repository: $REPO_URL"
+  git clone --depth 1 -- "$REPO_URL" /build/repo
+  cd /build/repo
+fi
 
 COMMIT_SHA=$(git rev-parse HEAD 2>/dev/null || echo "unknown")
 echo "[builder] Cloned commit: $COMMIT_SHA"
@@ -65,7 +71,7 @@ echo "[builder] Detected framework: $FRAMEWORK (output: $OUTPUT_DIR)"
 
 # 5. Detect Package Manager and Install/Build
 if [ "$FRAMEWORK" != "static" ]; then
-  INSTALL_CMD="npm install"
+  INSTALL_CMD=""
   BUILD_CMD="npm run build"
 
   if [ -f "pnpm-lock.yaml" ]; then
@@ -81,10 +87,15 @@ if [ "$FRAMEWORK" != "static" ]; then
   elif [ -f "package-lock.json" ]; then
     INSTALL_CMD="npm ci"
     BUILD_CMD="npm run build"
+  elif grep -q '"dependencies"' package.json 2>/dev/null || grep -q '"devDependencies"' package.json 2>/dev/null; then
+    INSTALL_CMD="npm install --no-audit --no-fund --no-package-lock"
+    BUILD_CMD="npm run build"
   fi
 
-  echo "[builder] Running install: $INSTALL_CMD"
-  $INSTALL_CMD
+  if [ -n "$INSTALL_CMD" ]; then
+    echo "[builder] Running install: $INSTALL_CMD"
+    $INSTALL_CMD
+  fi
 
   echo "[builder] Running build: $BUILD_CMD"
   $BUILD_CMD

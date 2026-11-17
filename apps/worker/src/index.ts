@@ -1,6 +1,6 @@
 import { Worker } from 'bullmq';
 import { getConfig, getRedisClient, logger } from '@deployservice/shared';
-import { executeBuild } from './builder.js';
+import { executeBuild, reapOrphanedContainers } from './builder.js';
 
 const config = getConfig();
 const redis = getRedisClient();
@@ -9,6 +9,17 @@ logger.info(
   { concurrency: config.MAX_CONCURRENT_BUILDS },
   'Starting deployment worker...'
 );
+
+// Reap any orphaned containers from previous crashes on startup
+reapOrphanedContainers()
+  .then((count) => {
+    if (count > 0) {
+      logger.info({ reapedCount: count }, 'Reaped orphaned build containers on startup');
+    }
+  })
+  .catch((err) => {
+    logger.warn({ err: err.message }, 'Failed during startup orphan container reaping');
+  });
 
 const worker = new Worker(
   'deployments',
