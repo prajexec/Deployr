@@ -97,7 +97,8 @@ describe('Database Migrator Concurrency', () => {
 
     // Migrations must only be applied once across both runners
     expect(appliedMigrations.has('0001_initial.sql')).toBe(true);
-    expect(appliedMigrations.size).toBe(1);
+    expect(appliedMigrations.has('0002_atomic_publish_and_rollback.sql')).toBe(true);
+    expect(appliedMigrations.size).toBe(2);
 
     // The actual migration DDL should only have been executed once, by whichever client acquired the lock first
     const ddlStatements = executedSqlStatements.filter((stmt) =>

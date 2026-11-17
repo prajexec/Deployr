@@ -1,6 +1,19 @@
 import { Worker } from 'bullmq';
-import { getConfig, getRedisClient, logger } from '@deployservice/shared';
-import { cancelActiveBuild, ensureBuildNetwork, reapOrphanedContainers } from './builder.js';
+import {
+  DeploymentStatus,
+  getConfig,
+  getRedisClient,
+  logger,
+  updateDeploymentStatus,
+} from '@deployservice/shared';
+import {
+  activeDeployments,
+  cancelActiveBuild,
+  ensureBuildNetwork,
+  getDockerClient,
+  reapOrphanedContainers,
+} from './builder.js';
+import { runCleanupTask } from './cleanup.js';
 import { processDeploymentJob } from './processor.js';
 import { recoverStuckDeployments } from './recovery.js';
 
@@ -11,6 +24,7 @@ logger.info({ concurrency: config.MAX_CONCURRENT_BUILDS }, 'Starting deployment 
 
 let worker: Worker | null = null;
 let recoveryInterval: NodeJS.Timeout | null = null;
+let cleanupInterval: NodeJS.Timeout | null = null;
 let cancelSubscriber: any = null;
 
 async function bootstrap() {
@@ -81,6 +95,13 @@ async function bootstrap() {
     });
   }, 60 * 1000);
 
+  // Periodic cleanup sweep every 30 minutes
+  cleanupInterval = setInterval(() => {
+    runCleanupTask({ redisClient: redis }).catch((err: any) => {
+      logger.warn({ err: err.message }, 'Error in periodic cleanup task');
+    });
+  }, 30 * 60 * 1000);
+
   // 4. Subscribe to cancellation channel
   try {
     cancelSubscriber = redis.duplicate();
@@ -104,10 +125,34 @@ bootstrap().catch((err) => {
 
 const shutdown = async (signal: string) => {
   logger.info({ signal }, 'Worker shutting down gracefully...');
+
+  const forceTimeout = setTimeout(async () => {
+    logger.error('Graceful shutdown timed out after 15s. Force-killing active builds...');
+    const docker = getDockerClient();
+    for (const depId of activeDeployments) {
+      try {
+        const ctr = docker.getContainer(`deployservice-build-${depId}`);
+        await ctr.kill().catch(() => {});
+        await ctr.remove({ force: true }).catch(() => {});
+        await updateDeploymentStatus(depId, DeploymentStatus.FAILED, {
+          error_message: 'Worker shutdown forced before build completed',
+          finished_at: new Date(),
+        }).catch(() => {});
+      } catch {
+        // ignore
+      }
+    }
+    process.exit(1);
+  }, 15000);
+
   try {
     if (recoveryInterval) {
       clearInterval(recoveryInterval);
       recoveryInterval = null;
+    }
+    if (cleanupInterval) {
+      clearInterval(cleanupInterval);
+      cleanupInterval = null;
     }
     if (cancelSubscriber) {
       await cancelSubscriber.quit();
@@ -116,9 +161,11 @@ const shutdown = async (signal: string) => {
     if (worker) {
       await worker.close();
     }
+    clearTimeout(forceTimeout);
     logger.info('Worker closed cleanly');
     process.exit(0);
   } catch (err) {
+    clearTimeout(forceTimeout);
     logger.error({ err }, 'Error closing worker');
     process.exit(1);
   }
