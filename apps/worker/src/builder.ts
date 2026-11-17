@@ -110,9 +110,9 @@ export async function reapOrphanedContainers(docker: Docker = getDockerClient())
 
         const ctr = docker.getContainer(info.Id);
         if (info.State === 'running' || info.State === 'restarting') {
-          await ctr.kill().catch(() => { });
+          await ctr.kill().catch(() => {});
         }
-        await ctr.remove({ force: true }).catch(() => { });
+        await ctr.remove({ force: true }).catch(() => {});
         reapedCount++;
       } catch (err: any) {
         logger.warn({ id: info.Id, err: err.message }, 'Failed to reap orphaned container');
@@ -128,7 +128,7 @@ export async function reapOrphanedContainers(docker: Docker = getDockerClient())
       for (const vol of volumes) {
         try {
           const v = docker.getVolume(vol.Name);
-          await v.remove({ force: true }).catch(() => { });
+          await v.remove({ force: true }).catch(() => {});
         } catch {
           // Volume might still be busy or already removed
         }
@@ -310,7 +310,7 @@ export async function executeBuild(
         // Check if build phase has started
         if (!transitionedToBuilding && text.includes('[builder] Detected framework:')) {
           transitionedToBuilding = true;
-          updateDeploymentStatus(deploymentId, DeploymentStatus.BUILDING).catch(() => { });
+          updateDeploymentStatus(deploymentId, DeploymentStatus.BUILDING).catch(() => {});
         }
 
         if (logBytesCaptured < maxLogBytes) {
@@ -337,9 +337,12 @@ export async function executeBuild(
     // 6. Set wall-clock timeout
     timeoutTimer = setTimeout(async () => {
       isTimedOut = true;
-      logger.warn({ deploymentId, timeoutMs }, 'Build exceeded wall-clock timeout. Force killing container...');
+      logger.warn(
+        { deploymentId, timeoutMs },
+        'Build exceeded wall-clock timeout. Force killing container...'
+      );
       if (container) {
-        await container.kill().catch(() => { });
+        await container.kill().catch(() => {});
       }
     }, timeoutMs);
 
@@ -369,7 +372,9 @@ export async function executeBuild(
 
     if (waitResult.StatusCode !== 0) {
       const tailLines = logBuffer.trim().split('\n').slice(-10).join('\n');
-      throw new Error(tailLines || `Build container exited with non-zero code ${waitResult.StatusCode}`);
+      throw new Error(
+        tailLines || `Build container exited with non-zero code ${waitResult.StatusCode}`
+      );
     }
 
     // 9. Transition: building -> uploading
@@ -388,7 +393,10 @@ export async function executeBuild(
         outputDir = meta.outputDir || outputDir;
       }
     } catch (err: any) {
-      logger.warn({ deploymentId, err: err.message }, 'Could not read build metadata, proceeding with defaults');
+      logger.warn(
+        { deploymentId, err: err.message },
+        'Could not read build metadata, proceeding with defaults'
+      );
     }
 
     // 11. Extract output artifacts and validate tar stream
@@ -405,7 +413,10 @@ export async function executeBuild(
 
     // 12. Upload files to MinIO under deployments/<id>/
     const s3Prefix = `deployments/${deploymentId}`;
-    logger.info({ deploymentId, fileCount: extractedFiles.length }, 'Uploading extracted files to storage...');
+    logger.info(
+      { deploymentId, fileCount: extractedFiles.length },
+      'Uploading extracted files to storage...'
+    );
 
     for (const file of extractedFiles) {
       const s3Key = `${s3Prefix}/${file.path}`;
@@ -420,7 +431,10 @@ export async function executeBuild(
       output_dir: outputDir,
     });
 
-    logger.info({ deploymentId, commitSha, fileCount: extractedFiles.length }, 'Deployment successfully published!');
+    logger.info(
+      { deploymentId, commitSha, fileCount: extractedFiles.length },
+      'Deployment successfully published!'
+    );
   } catch (err: any) {
     logger.error({ deploymentId, err: err.message }, 'Deployment build failed');
 
@@ -437,7 +451,10 @@ export async function executeBuild(
         }
       );
     } catch (updateErr: any) {
-      logger.error({ deploymentId, updateErr: updateErr.message }, 'Failed updating deployment failure status');
+      logger.error(
+        { deploymentId, updateErr: updateErr.message },
+        'Failed updating deployment failure status'
+      );
     }
 
     throw err;
@@ -450,10 +467,10 @@ export async function executeBuild(
 
     // Always clean up container and volume in finally
     if (container) {
-      await container.remove({ force: true }).catch(() => { });
+      await container.remove({ force: true }).catch(() => {});
     }
     if (volume) {
-      await volume.remove({ force: true }).catch(() => { });
+      await volume.remove({ force: true }).catch(() => {});
     }
   }
 }

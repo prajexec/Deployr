@@ -65,11 +65,7 @@ export function sanitizePath(rawUrlPath: string): string | null {
     return null;
   }
 
-  if (
-    decodedPath.includes('..') ||
-    decodedPath.includes('\0') ||
-    decodedPath.includes('\\')
-  ) {
+  if (decodedPath.includes('..') || decodedPath.includes('\0') || decodedPath.includes('\\')) {
     return null;
   }
 

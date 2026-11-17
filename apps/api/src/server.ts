@@ -63,7 +63,9 @@ export function buildServer(): FastifyInstance {
       },
     },
     async (request, reply) => {
-      const body = (typeof request.body === 'object' && request.body !== null ? request.body : {}) as { repoUrl?: string };
+      const body = (
+        typeof request.body === 'object' && request.body !== null ? request.body : {}
+      ) as { repoUrl?: string };
       const repoUrl = body.repoUrl;
 
       const validation = validateRepoUrl(repoUrl || '');
@@ -86,10 +88,7 @@ export function buildServer(): FastifyInstance {
           repoUrl: sanitizedUrl,
         });
 
-        logger.info(
-          { deploymentId: deployment.id, repoUrl: sanitizedUrl },
-          'Deployment enqueued'
-        );
+        logger.info({ deploymentId: deployment.id, repoUrl: sanitizedUrl }, 'Deployment enqueued');
 
         return reply.status(201).send({
           id: deployment.id,

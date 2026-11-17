@@ -1,6 +1,7 @@
 # DeployService Architecture
 
 ## Overview
+
 DeployService is an open-source, self-hosted deployment platform inspired by Vercel and Netlify. It accepts public Git repositories, builds them in isolated Docker containers, stores static build artifacts in an S3-compatible object store (MinIO), and serves them through a high-performance wildcard router.
 
 ```

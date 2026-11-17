@@ -19,12 +19,15 @@ A self-hosted, zero-cost deployment platform (Vercel/Netlify-style) built from s
 ## Quickstart
 
 ### 1. Prerequisites
+
 - Docker & Docker Compose
 - Node.js 20+
 - pnpm 9+
 
 ### 2. Fresh Clone Setup
+
 To bootstrap a clean clone without running any manual Docker setup commands:
+
 ```bash
 # 1. Clone repository & enter workspace
 git clone https://github.com/prajexec/Deployr.git && cd Deployr
@@ -38,9 +41,11 @@ pnpm install
 # 4. Build and start all services
 docker compose up -d --build
 ```
+
 `docker compose up -d --build` builds all application containers and the isolated sandbox builder image (`deployservice-builder:latest`). The worker automatically and idempotently creates the dedicated build bridge network (`deployservice-build-net`) on startup before processing any build jobs. No manual Docker network or image management is required.
 
 ### 3. Run Tests
+
 ```bash
 # Unit tests (runs without Docker dependencies)
 pnpm test
@@ -51,17 +56,21 @@ pnpm test:integration
 ```
 
 ### 4. Create a Deployment
+
 ```bash
 curl -X POST http://localhost:3000/deployments \
   -H "Content-Type: application/json" \
   -d '{"repoUrl": "https://github.com/vitejs/vite"}'
 ```
+
 Inspect deployment:
+
 ```bash
 curl http://localhost:3000/deployments/<id>
 ```
+
 Visit the deployed application once ready:
+
 ```
 http://<id>.localhost:8080
 ```
-

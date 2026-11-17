@@ -5,10 +5,7 @@ import { ensureBuildNetwork, executeBuild, reapOrphanedContainers } from './buil
 const config = getConfig();
 const redis = getRedisClient();
 
-logger.info(
-  { concurrency: config.MAX_CONCURRENT_BUILDS },
-  'Starting deployment worker...'
-);
+logger.info({ concurrency: config.MAX_CONCURRENT_BUILDS }, 'Starting deployment worker...');
 
 let worker: Worker | null = null;
 

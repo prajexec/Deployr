@@ -7,7 +7,12 @@
  * - Path must follow /<owner>/<repo> (with optional .git suffix).
  * - Owner and repo must match valid GitHub naming conventions (alphanumeric, hyphens, underscores).
  */
-export function validateRepoUrl(urlStr: string): { valid: boolean; error?: string; owner?: string; repo?: string } {
+export function validateRepoUrl(urlStr: string): {
+  valid: boolean;
+  error?: string;
+  owner?: string;
+  repo?: string;
+} {
   if (!urlStr || typeof urlStr !== 'string') {
     return { valid: false, error: 'Repository URL is required and must be a string' };
   }
@@ -23,7 +28,10 @@ export function validateRepoUrl(urlStr: string): { valid: boolean; error?: strin
 
   // Scheme must strictly be https:
   if (parsed.protocol !== 'https:') {
-    return { valid: false, error: `Protocol '${parsed.protocol}' is not allowed. Only HTTPS is supported.` };
+    return {
+      valid: false,
+      error: `Protocol '${parsed.protocol}' is not allowed. Only HTTPS is supported.`,
+    };
   }
 
   // Host must strictly be github.com (exact match, case-insensitive)
