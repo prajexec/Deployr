@@ -7,6 +7,7 @@ import {
   checkStorageHealth,
   createDeployment,
   createOrGetProject,
+  getConfig,
   getDeployment,
   listDeployments,
   logger,
@@ -15,13 +16,21 @@ import {
 import { getDeploymentQueue } from './queue.js';
 
 export function buildServer(): FastifyInstance {
+  const config = getConfig();
   const fastify = Fastify({
     logger: false,
     disableRequestLogging: true,
   });
 
   fastify.register(cors, {
-    origin: '*',
+    origin: (origin, cb) => {
+      // Allow requests with no origin (e.g. curl, server-to-server) or matching FRONTEND_URL
+      if (!origin || origin === config.FRONTEND_URL) {
+        cb(null, true);
+        return;
+      }
+      cb(null, false);
+    },
   });
 
   fastify.register(rateLimit, {
@@ -63,7 +72,9 @@ export function buildServer(): FastifyInstance {
       },
     },
     async (request, reply) => {
-      const body = (typeof request.body === 'object' && request.body !== null ? request.body : {}) as { repoUrl?: string };
+      const body = (
+        typeof request.body === 'object' && request.body !== null ? request.body : {}
+      ) as { repoUrl?: string };
       const repoUrl = body.repoUrl;
 
       const validation = validateRepoUrl(repoUrl || '');
@@ -86,10 +97,7 @@ export function buildServer(): FastifyInstance {
           repoUrl: sanitizedUrl,
         });
 
-        logger.info(
-          { deploymentId: deployment.id, repoUrl: sanitizedUrl },
-          'Deployment enqueued'
-        );
+        logger.info({ deploymentId: deployment.id, repoUrl: sanitizedUrl }, 'Deployment enqueued');
 
         return reply.status(201).send({
           id: deployment.id,

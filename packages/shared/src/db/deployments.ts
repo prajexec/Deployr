@@ -17,11 +17,7 @@ export function generateProjectId(): string {
 
 export async function createOrGetProject(name: string, repoUrl: string): Promise<ProjectRecord> {
   const db = getDb();
-  const existing = await db
-    .select()
-    .from(projects)
-    .where(eq(projects.repo_url, repoUrl))
-    .limit(1);
+  const existing = await db.select().from(projects).where(eq(projects.repo_url, repoUrl)).limit(1);
 
   if (existing.length > 0) {
     return existing[0];
@@ -61,22 +57,14 @@ export async function createDeployment(
 
 export async function getDeployment(id: string): Promise<DeploymentRecord | null> {
   const db = getDb();
-  const rows = await db
-    .select()
-    .from(deployments)
-    .where(eq(deployments.id, id))
-    .limit(1);
+  const rows = await db.select().from(deployments).where(eq(deployments.id, id)).limit(1);
 
   return rows[0] || null;
 }
 
 export async function listDeployments(limit = 50): Promise<DeploymentRecord[]> {
   const db = getDb();
-  return await db
-    .select()
-    .from(deployments)
-    .orderBy(desc(deployments.created_at))
-    .limit(limit);
+  return await db.select().from(deployments).orderBy(desc(deployments.created_at)).limit(limit);
 }
 
 export async function updateDeploymentStatus(

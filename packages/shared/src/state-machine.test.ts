@@ -64,8 +64,8 @@ describe('Deployment Status State Machine', () => {
   });
 
   it('assertTransition throws IllegalStateTransitionError with readable message', () => {
-    expect(() =>
-      assertTransition(DeploymentStatus.QUEUED, DeploymentStatus.DEPLOYED)
-    ).toThrowError("Illegal deployment status transition from 'queued' to 'deployed'");
+    expect(() => assertTransition(DeploymentStatus.QUEUED, DeploymentStatus.DEPLOYED)).toThrowError(
+      "Illegal deployment status transition from 'queued' to 'deployed'"
+    );
   });
 });

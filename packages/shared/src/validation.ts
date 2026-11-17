@@ -7,7 +7,12 @@
  * - Path must follow /<owner>/<repo> (with optional .git suffix).
  * - Owner and repo must match valid GitHub naming conventions (alphanumeric, hyphens, underscores).
  */
-export function validateRepoUrl(urlStr: string): { valid: boolean; error?: string; owner?: string; repo?: string } {
+export function validateRepoUrl(urlStr: string): {
+  valid: boolean;
+  error?: string;
+  owner?: string;
+  repo?: string;
+} {
   if (!urlStr || typeof urlStr !== 'string') {
     return { valid: false, error: 'Repository URL is required and must be a string' };
   }
@@ -23,7 +28,10 @@ export function validateRepoUrl(urlStr: string): { valid: boolean; error?: strin
 
   // Scheme must strictly be https:
   if (parsed.protocol !== 'https:') {
-    return { valid: false, error: `Protocol '${parsed.protocol}' is not allowed. Only HTTPS is supported.` };
+    return {
+      valid: false,
+      error: `Protocol '${parsed.protocol}' is not allowed. Only HTTPS is supported.`,
+    };
   }
 
   // Host must strictly be github.com (exact match, case-insensitive)
@@ -32,18 +40,22 @@ export function validateRepoUrl(urlStr: string): { valid: boolean; error?: strin
     return { valid: false, error: `Host '${host}' is not allowed. Only github.com is supported.` };
   }
 
-  // Reject port specifications, usernames, passwords
+  // Reject port specifications, usernames, passwords, query parameters, and hashes
   if (parsed.port) {
     return { valid: false, error: 'Custom ports are not allowed in repository URLs.' };
   }
   if (parsed.username || parsed.password) {
     return { valid: false, error: 'Credentials in repository URLs are not allowed.' };
   }
+  if (parsed.search || parsed.hash) {
+    return { valid: false, error: 'Query parameters and URL hashes are not allowed.' };
+  }
 
   // Pathname must be /<owner>/<repo>[.git]
-  // GitHub usernames: 1-39 alphanumeric/hyphens
-  // GitHub repo names: 1-100 alphanumeric, hyphens, underscores, dots
-  const pathRegex = /^\/([a-zA-Z0-9_-]{1,100})\/([a-zA-Z0-9_.-]{1,100})(\.git)?$/;
+  // GitHub usernames: 1-39 alphanumeric/hyphens, cannot start with hyphen
+  // GitHub repo names: 1-100 alphanumeric, hyphens, underscores, dots, cannot start with hyphen
+  const pathRegex =
+    /^\/([a-zA-Z0-9][a-zA-Z0-9_-]{0,99})\/([a-zA-Z0-9_][a-zA-Z0-9_.-]{0,99})(\.git)?$/;
   const match = parsed.pathname.match(pathRegex);
 
   if (!match) {

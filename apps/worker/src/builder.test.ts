@@ -48,7 +48,9 @@ describe('ensureBuildNetwork', () => {
 
   it('safely handles 409 Conflict when creation races with another worker', async () => {
     const listNetworks = vi.fn().mockResolvedValue([]);
-    const conflictError: any = new Error('network with name deployservice-build-net already exists');
+    const conflictError: any = new Error(
+      'network with name deployservice-build-net already exists'
+    );
     conflictError.statusCode = 409;
     const createNetwork = vi.fn().mockRejectedValue(conflictError);
     const mockDocker = { listNetworks, createNetwork } as any;

@@ -41,9 +41,7 @@ describe('Tar Extractor Security & Bounds Validation', () => {
       },
     ]);
 
-    await expect(validateAndExtractTar(stream)).rejects.toThrow(
-      /Illegal tar entry type 'symlink'/
-    );
+    await expect(validateAndExtractTar(stream)).rejects.toThrow(/Illegal tar entry type 'symlink'/);
   });
 
   it('rejects path traversal with ..', async () => {

@@ -22,8 +22,7 @@ export function detectFramework(repoDir: string): FrameworkConfig {
 
   // Check 1: Vite
   const hasViteDep =
-    Boolean(packageJson?.dependencies?.['vite']) ||
-    Boolean(packageJson?.devDependencies?.['vite']);
+    Boolean(packageJson?.dependencies?.['vite']) || Boolean(packageJson?.devDependencies?.['vite']);
   const hasViteConfig = [
     'vite.config.js',
     'vite.config.ts',

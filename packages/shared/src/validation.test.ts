@@ -78,6 +78,35 @@ describe('validateRepoUrl', () => {
     expect(validateRepoUrl('https://github.com/owner/repo/extra/path').valid).toBe(false);
     expect(validateRepoUrl('https://github.com/../repo').valid).toBe(false);
   });
+
+  it('rejects hostile inputs with shell metacharacters, newlines, spaces, and leading dashes', () => {
+    const hostileInputs = [
+      '--upload-pack=touch /tmp/pwned',
+      '-oProxyCommand=sh evil.sh',
+      'https://github.com/foo/bar;rm -rf /',
+      'https://github.com/foo/bar`touch pwn`',
+      'https://github.com/foo/bar$(whoami)',
+      'https://github.com/foo/bar|sh',
+      'https://github.com/foo/bar&echo pwn',
+      'https://github.com/foo/bar\nrm -rf /',
+      'https://github.com/foo/bar\r\necho pwn',
+      'https://github.com/foo/bar repo',
+      'https://github.com/foo/bar<input',
+      'https://github.com/foo/bar>output',
+      'https://github.com/foo/bar*glob',
+      'https://github.com/foo/bar?param=1',
+      'https://github.com/foo/bar\\escape',
+      "https://github.com/foo/bar'quote",
+      'https://github.com/foo/bar"dquote',
+      'https://github.com/-owner/repo',
+      'https://github.com/owner/-repo',
+    ];
+
+    for (const input of hostileInputs) {
+      const res = validateRepoUrl(input);
+      expect(res.valid, `Hostile input '${input}' must be rejected`).toBe(false);
+    }
+  });
 });
 
 describe('isValidSubdomain', () => {

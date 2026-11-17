@@ -17,6 +17,14 @@ case "$REPO_URL" in
     ;;
 esac
 
+# Reject whitespace, newlines, and shell metacharacters (defense in depth)
+case "$REPO_URL" in
+  *[[:space:]]*|*[\$\`\;\&\|\<\>\*\?\\\'\"]*)
+    echo "[builder] ERROR: REPO_URL contains forbidden characters or whitespace." >&2
+    exit 1
+    ;;
+esac
+
 # Validate strict HTTPS github.com pattern
 # Allows https://github.com/<owner>/<repo>[.git]
 VALID_URL=$(echo "$REPO_URL" | grep -E '^https://github\.com/[a-zA-Z0-9_.-]+/[a-zA-Z0-9_.-]+(\.git)?/?$' || true)

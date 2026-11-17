@@ -88,13 +88,25 @@ export async function ensureBuildNetwork(
   }
 }
 
+export interface ReaperResult {
+  containersReaped: number;
+  volumesReaped: number;
+}
+
 /**
  * Startup reaper: forcefully removes any orphaned build containers and volumes
  * labeled with 'deployservice.managed=true' left over from previous crashes.
- * Never kills containers belonging to active deployments.
+ * Scoped by age (> maxAgeMs, default 5m) or stopped state, and never kills
+ * resources belonging to active deployments on this worker instance.
  */
-export async function reapOrphanedContainers(docker: Docker = getDockerClient()): Promise<number> {
-  let reapedCount = 0;
+export async function reapOrphanedContainers(
+  docker: Docker = getDockerClient(),
+  maxAgeMs: number = 300000
+): Promise<ReaperResult> {
+  let containersReaped = 0;
+  let volumesReaped = 0;
+  const now = Date.now();
+
   try {
     const containers = await docker.listContainers({
       all: true,
@@ -105,15 +117,34 @@ export async function reapOrphanedContainers(docker: Docker = getDockerClient())
       try {
         const deploymentId = info.Labels?.['deployservice.deployment_id'];
         if (deploymentId && activeDeployments.has(deploymentId)) {
-          continue; // Skip actively executing deployment
+          continue; // Skip actively executing deployment on this worker
+        }
+
+        // Scope running containers: if recently created, do not touch (may belong to another worker)
+        if (info.State === 'running' || info.State === 'restarting') {
+          const createdAtStr = info.Labels?.['deployservice.created_at'];
+          const createdAt = createdAtStr ? new Date(createdAtStr).getTime() : 0;
+          if (createdAt && now - createdAt < maxAgeMs) {
+            continue;
+          }
+
+          const ctr = docker.getContainer(info.Id);
+          await ctr.kill().catch((err: any) => {
+            logger.warn(
+              { id: info.Id, err: err.message },
+              'Failed killing orphaned container during reap'
+            );
+          });
         }
 
         const ctr = docker.getContainer(info.Id);
-        if (info.State === 'running' || info.State === 'restarting') {
-          await ctr.kill().catch(() => { });
-        }
-        await ctr.remove({ force: true }).catch(() => { });
-        reapedCount++;
+        await ctr.remove({ force: true }).catch((err: any) => {
+          logger.warn(
+            { id: info.Id, err: err.message },
+            'Failed removing orphaned container during reap'
+          );
+        });
+        containersReaped++;
       } catch (err: any) {
         logger.warn({ id: info.Id, err: err.message }, 'Failed to reap orphaned container');
       }
@@ -127,18 +158,35 @@ export async function reapOrphanedContainers(docker: Docker = getDockerClient())
     if (volumes) {
       for (const vol of volumes) {
         try {
+          const deploymentId = vol.Labels?.['deployservice.deployment_id'];
+          if (deploymentId && activeDeployments.has(deploymentId)) {
+            continue;
+          }
+
+          const createdAtStr = vol.Labels?.['deployservice.created_at'];
+          const createdAt = createdAtStr ? new Date(createdAtStr).getTime() : 0;
+          if (createdAt && now - createdAt < maxAgeMs) {
+            continue;
+          }
+
           const v = docker.getVolume(vol.Name);
-          await v.remove({ force: true }).catch(() => { });
-        } catch {
-          // Volume might still be busy or already removed
+          await v.remove({ force: true }).catch((err: any) => {
+            logger.warn(
+              { name: vol.Name, err: err.message },
+              'Failed removing orphaned volume during reap'
+            );
+          });
+          volumesReaped++;
+        } catch (err: any) {
+          logger.warn({ name: vol.Name, err: err.message }, 'Failed to reap orphaned volume');
         }
       }
     }
   } catch (err: any) {
-    logger.warn({ err: err.message }, 'Failed listing containers for startup reaping');
+    logger.warn({ err: err.message }, 'Failed listing containers/volumes for startup reaping');
   }
 
-  return reapedCount;
+  return { containersReaped, volumesReaped };
 }
 
 /**
@@ -245,6 +293,7 @@ export async function executeBuild(
       Labels: {
         'deployservice.managed': 'true',
         'deployservice.deployment_id': deploymentId,
+        'deployservice.created_at': new Date().toISOString(),
       },
     });
     volume = docker.getVolume(volumeName);
@@ -310,7 +359,7 @@ export async function executeBuild(
         // Check if build phase has started
         if (!transitionedToBuilding && text.includes('[builder] Detected framework:')) {
           transitionedToBuilding = true;
-          updateDeploymentStatus(deploymentId, DeploymentStatus.BUILDING).catch(() => { });
+          updateDeploymentStatus(deploymentId, DeploymentStatus.BUILDING).catch(() => {});
         }
 
         if (logBytesCaptured < maxLogBytes) {
@@ -337,9 +386,14 @@ export async function executeBuild(
     // 6. Set wall-clock timeout
     timeoutTimer = setTimeout(async () => {
       isTimedOut = true;
-      logger.warn({ deploymentId, timeoutMs }, 'Build exceeded wall-clock timeout. Force killing container...');
+      logger.warn(
+        { deploymentId, timeoutMs },
+        'Build exceeded wall-clock timeout. Force killing container...'
+      );
       if (container) {
-        await container.kill().catch(() => { });
+        await container.kill().catch((killErr: any) => {
+          logger.warn({ deploymentId, err: killErr.message }, 'Failed killing timed-out container');
+        });
       }
     }, timeoutMs);
 
@@ -369,7 +423,9 @@ export async function executeBuild(
 
     if (waitResult.StatusCode !== 0) {
       const tailLines = logBuffer.trim().split('\n').slice(-10).join('\n');
-      throw new Error(tailLines || `Build container exited with non-zero code ${waitResult.StatusCode}`);
+      throw new Error(
+        tailLines || `Build container exited with non-zero code ${waitResult.StatusCode}`
+      );
     }
 
     // 9. Transition: building -> uploading
@@ -388,7 +444,10 @@ export async function executeBuild(
         outputDir = meta.outputDir || outputDir;
       }
     } catch (err: any) {
-      logger.warn({ deploymentId, err: err.message }, 'Could not read build metadata, proceeding with defaults');
+      logger.warn(
+        { deploymentId, err: err.message },
+        'Could not read build metadata, proceeding with defaults'
+      );
     }
 
     // 11. Extract output artifacts and validate tar stream
@@ -405,7 +464,10 @@ export async function executeBuild(
 
     // 12. Upload files to MinIO under deployments/<id>/
     const s3Prefix = `deployments/${deploymentId}`;
-    logger.info({ deploymentId, fileCount: extractedFiles.length }, 'Uploading extracted files to storage...');
+    logger.info(
+      { deploymentId, fileCount: extractedFiles.length },
+      'Uploading extracted files to storage...'
+    );
 
     for (const file of extractedFiles) {
       const s3Key = `${s3Prefix}/${file.path}`;
@@ -420,7 +482,10 @@ export async function executeBuild(
       output_dir: outputDir,
     });
 
-    logger.info({ deploymentId, commitSha, fileCount: extractedFiles.length }, 'Deployment successfully published!');
+    logger.info(
+      { deploymentId, commitSha, fileCount: extractedFiles.length },
+      'Deployment successfully published!'
+    );
   } catch (err: any) {
     logger.error({ deploymentId, err: err.message }, 'Deployment build failed');
 
@@ -437,7 +502,10 @@ export async function executeBuild(
         }
       );
     } catch (updateErr: any) {
-      logger.error({ deploymentId, updateErr: updateErr.message }, 'Failed updating deployment failure status');
+      logger.error(
+        { deploymentId, updateErr: updateErr.message },
+        'Failed updating deployment failure status'
+      );
     }
 
     throw err;
@@ -450,10 +518,20 @@ export async function executeBuild(
 
     // Always clean up container and volume in finally
     if (container) {
-      await container.remove({ force: true }).catch(() => { });
+      await container.remove({ force: true }).catch((err: any) => {
+        logger.warn(
+          { deploymentId, err: err.message },
+          'Failed removing build container during cleanup'
+        );
+      });
     }
     if (volume) {
-      await volume.remove({ force: true }).catch(() => { });
+      await volume.remove({ force: true }).catch((err: any) => {
+        logger.warn(
+          { deploymentId, err: err.message },
+          'Failed removing build volume during cleanup'
+        );
+      });
     }
   }
 }

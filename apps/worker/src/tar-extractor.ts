@@ -68,7 +68,9 @@ export async function validateAndExtractTar(
       const parts = rawName.split(/[\/\\]+/).filter(Boolean);
       if (parts.some((p) => p === '..')) {
         stream.resume();
-        return reject(new TarSecurityError(`Directory traversal ('..') forbidden in tar entry '${rawName}'.`));
+        return reject(
+          new TarSecurityError(`Directory traversal ('..') forbidden in tar entry '${rawName}'.`)
+        );
       }
 
       // If directory, nothing to buffer, proceed

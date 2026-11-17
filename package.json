@@ -9,11 +9,14 @@
     "test:unit": "vitest run --exclude 'test/integration/**'",
     "test:integration": "vitest run test/integration --no-file-parallelism",
     "lint": "echo 'Linting skipped'",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
     "db:generate": "pnpm --filter @deployservice/shared db:generate",
     "db:migrate": "pnpm --filter @deployservice/shared db:migrate"
   },
   "devDependencies": {
     "@types/node": "^20.14.0",
+    "prettier": "^3.3.0",
     "typescript": "^5.4.5",
     "vitest": "^1.6.0"
   }
