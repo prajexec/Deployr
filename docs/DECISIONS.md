@@ -251,7 +251,9 @@ This document records architectural decisions made throughout the design and imp
 ## 18. Phase 4: Live Build Log Streaming via Redis Streams and Server-Sent Events (SSE)
 
 ### 18.1. Context and Requirements
+
 In Phase 4, users watching a deployment need to see live build output in real time as the container executes. Once builds complete, the entire build log must remain durably retrievable. The system must support:
+
 - Live streaming with minimal latency.
 - Seamless reconnects with no duplicate or missing log lines.
 - Containment against memory exhaustion (enforcing the 2 MB log cap).
@@ -265,6 +267,7 @@ In Phase 4, users watching a deployment need to see live build output in real ti
 ### 18.2. Stream Data Format
 
 #### Redis Stream Schema
+
 - **Stream Key**: `logs:<deployment_id>`
 - **Command**: `XADD logs:<deployment_id> MAXLEN ~ 10000 * ts <iso_ts> stream <stdout|stderr|system> data <text>`
 - **Fields**:
@@ -276,6 +279,7 @@ In Phase 4, users watching a deployment need to see live build output in real ti
   - `data`: UTF-8 log line or text chunk.
 
 #### SSE Wire Format
+
 - Implements standard W3C Server-Sent Events (`text/event-stream; charset=utf-8`):
   - **Log Event**:
     ```http
@@ -324,7 +328,7 @@ In Phase 4, users watching a deployment need to see live build output in real ti
   - When a browser or client reconnects following a network disruption, the browser automatically transmits the standard HTTP header:
     `Last-Event-ID: <redis_id>` (or query parameter `?lastEventId=<redis_id>`).
   - The API queries Redis using `XRANGE logs:<id> (<last_event_id> +` (or `XREAD ... STREAMS logs:<id> <last_event_id>`).
-  - Because Redis stream IDs are strictly monotonic and `XRANGE`/`XREAD` exclusion syntax returns entries strictly *after* `<last_event_id>`, replay is 100% gapless with zero duplicate events.
+  - Because Redis stream IDs are strictly monotonic and `XRANGE`/`XREAD` exclusion syntax returns entries strictly _after_ `<last_event_id>`, replay is 100% gapless with zero duplicate events.
 - **Keep-Alive Heartbeats**:
   - Proxies, load balancers (e.g., AWS ALB, Cloudflare, Traefik), and stateful NAT routers drop idle TCP connections after 30–60 seconds of silence.
   - The API maintains a 15-second heartbeat timer per active connection that writes `: ping\n\n`. W3C compliant clients ignore lines starting with a colon (`:`), but intermediate proxies see TCP data and reset their idle timers.
@@ -343,6 +347,7 @@ In Phase 4, users watching a deployment need to see live build output in real ti
 ---
 
 ### 18.5. Redis XREAD BLOCK Connection Strategy with In-Memory Fan-Out
+
 - **Single Source of Truth**: Redis Stream (`logs:<deployment_id>`) is used directly as the single source of truth for both catchup and real-time streaming, eliminating pub/sub dual-write drift and pub/sub reconnect drop gaps.
 - **Dedicated Worker Loop**: A single dedicated Redis connection in the API process continuously runs `XREAD BLOCK 2000 STREAMS <keys...> <ids...>` across all active deployments currently being viewed by at least one client.
 - **In-Memory Fan-Out**: Received entries are dispatched in-memory to registered client callbacks.
@@ -354,6 +359,7 @@ In Phase 4, users watching a deployment need to see live build output in real ti
   - Slow clients whose `reply.raw.writableLength` exceeds 512 KB are forcefully disconnected to protect API heap memory.
 
 ### 18.6. End-of-Build Archiving and Terminal-State Sequencing
+
 1. **Worker Finalization**:
    - Capture buffer in worker memory is finalized independently of Redis stream trimming.
    - Full log archive uploaded to MinIO at `deployments/<id>/logs.txt`. If MinIO upload fails, deploy still succeeds if build passed, with log warning "archive unavailable".
@@ -365,10 +371,10 @@ In Phase 4, users watching a deployment need to see live build output in real ti
    - If Postgres is terminal and no stream entries are pending, the API terminates the SSE stream cleanly with `event: end`.
 
 ### 18.7. Security, Auth, and 128-Bit Capability IDs
+
 - **128-bit Random IDs**: Deployment IDs follow `^d-[a-f0-9]{32}$` everywhere (API and router), providing 128 bits of entropy against ID enumeration.
 - **API Key Authentication**:
   - `API_KEY` configured in `.env`.
   - Required for `POST /deployments` and `GET /deployments` (listing).
   - `GET /deployments/:id` and `/logs` remain unauthenticated capability URLs based on the 128-bit secret ID.
   - Documented residual risk: any build container reaching the host gateway on port 3000 cannot enumerate deployments without the API key, nor guess 128-bit random deployment IDs.
-
