@@ -9,7 +9,7 @@ services:
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres -d deployservice"]
+      test: [ "CMD-SHELL", "pg_isready -U postgres -d deployservice" ]
       interval: 3s
       timeout: 3s
       retries: 10
@@ -20,7 +20,7 @@ services:
     volumes:
       - redisdata:/data
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: [ "CMD", "redis-cli", "ping" ]
       interval: 3s
       timeout: 3s
       retries: 10
@@ -35,7 +35,7 @@ services:
     volumes:
       - miniodata:/data
     healthcheck:
-      test: ["CMD", "mc", "ready", "local"]
+      test: [ "CMD", "mc", "ready", "local" ]
       interval: 3s
       timeout: 3s
       retries: 10
@@ -66,7 +66,7 @@ services:
       minio:
         condition: service_healthy
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:3000/healthz | grep ok || exit 1"]
+      test: [ "CMD-SHELL", "wget -qO- http://127.0.0.1:3000/healthz | grep ok || exit 1" ]
       interval: 5s
       timeout: 3s
       retries: 10
@@ -95,13 +95,16 @@ services:
         condition: service_healthy
       minio:
         condition: service_healthy
+      builder:
+        condition: service_completed_successfully
 
   builder:
+    container_name: deployservice-builder
     image: deployservice-builder:latest
     build:
       context: .
       dockerfile: docker/builder/Dockerfile
-    entrypoint: ["echo", "Builder image built successfully"]
+    entrypoint: [ "echo", "Builder image built successfully" ]
     restart: "no"
 
   router:
@@ -145,5 +148,3 @@ volumes:
 networks:
   default:
     name: deployservice-network
-  build-net:
-    name: deployservice-build-net

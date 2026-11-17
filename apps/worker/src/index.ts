@@ -1,6 +1,6 @@
 import { Worker } from 'bullmq';
 import { getConfig, getRedisClient, logger } from '@deployservice/shared';
-import { executeBuild, reapOrphanedContainers } from './builder.js';
+import { ensureBuildNetwork, executeBuild, reapOrphanedContainers } from './builder.js';
 
 const config = getConfig();
 const redis = getRedisClient();
@@ -10,50 +10,69 @@ logger.info(
   'Starting deployment worker...'
 );
 
-// Reap any orphaned containers from previous crashes on startup
-reapOrphanedContainers()
-  .then((count) => {
-    if (count > 0) {
-      logger.info({ reapedCount: count }, 'Reaped orphaned build containers on startup');
+let worker: Worker | null = null;
+
+async function bootstrap() {
+  // 1. Clean up orphaned containers/volumes from previous crashes
+  try {
+    const reapedCount = await reapOrphanedContainers();
+    if (reapedCount > 0) {
+      logger.info({ reapedCount }, 'Reaped orphaned build containers on startup');
     }
-  })
-  .catch((err) => {
+  } catch (err: any) {
     logger.warn({ err: err.message }, 'Failed during startup orphan container reaping');
+  }
+
+  // 2. Ensure isolated build network exists before processing any jobs
+  try {
+    await ensureBuildNetwork();
+  } catch (err: any) {
+    logger.error({ err: err.message }, 'Failed during startup build network creation');
+    process.exit(1);
+  }
+
+  // 3. Start BullMQ worker consumer
+  worker = new Worker(
+    'deployments',
+    async (job) => {
+      const { deploymentId, repoUrl } = job.data as {
+        deploymentId: string;
+        repoUrl: string;
+      };
+
+      logger.info({ deploymentId, repoUrl, jobId: job.id }, 'Worker received build job');
+      await executeBuild(deploymentId, repoUrl);
+    },
+    {
+      connection: redis,
+      concurrency: config.MAX_CONCURRENT_BUILDS,
+    }
+  );
+
+  worker.on('ready', () => {
+    logger.info('Deployment worker ready and listening for jobs.');
   });
 
-const worker = new Worker(
-  'deployments',
-  async (job) => {
-    const { deploymentId, repoUrl } = job.data as {
-      deploymentId: string;
-      repoUrl: string;
-    };
+  worker.on('completed', (job) => {
+    logger.info({ jobId: job.id }, 'Job completed successfully');
+  });
 
-    logger.info({ deploymentId, repoUrl, jobId: job.id }, 'Worker received build job');
-    await executeBuild(deploymentId, repoUrl);
-  },
-  {
-    connection: redis,
-    concurrency: config.MAX_CONCURRENT_BUILDS,
-  }
-);
+  worker.on('failed', (job, err) => {
+    logger.error({ jobId: job?.id, err: err.message }, 'Job failed');
+  });
+}
 
-worker.on('ready', () => {
-  logger.info('Deployment worker ready and listening for jobs.');
-});
-
-worker.on('completed', (job) => {
-  logger.info({ jobId: job.id }, 'Job completed successfully');
-});
-
-worker.on('failed', (job, err) => {
-  logger.error({ jobId: job?.id, err: err.message }, 'Job failed');
+bootstrap().catch((err) => {
+  logger.error({ err: err.message }, 'Fatal error during worker bootstrap');
+  process.exit(1);
 });
 
 const shutdown = async (signal: string) => {
   logger.info({ signal }, 'Worker shutting down gracefully...');
   try {
-    await worker.close();
+    if (worker) {
+      await worker.close();
+    }
     logger.info('Worker closed cleanly');
     process.exit(0);
   } catch (err) {

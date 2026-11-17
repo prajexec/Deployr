@@ -52,6 +52,42 @@ export function setDockerClient(client: Docker | null) {
   dockerInstance = client;
 }
 
+export const BUILD_NETWORK_NAME = 'deployservice-build-net';
+
+/**
+ * Idempotently ensures that the dedicated build bridge network exists.
+ * If the network does not exist, it creates it with bridge driver and managed label.
+ * If concurrent workers/tests attempt creation simultaneously, 409 Conflict is safely ignored.
+ */
+export async function ensureBuildNetwork(
+  docker: Docker = getDockerClient(),
+  networkName: string = BUILD_NETWORK_NAME
+): Promise<void> {
+  try {
+    const networks = await docker.listNetworks({
+      filters: { name: [networkName] },
+    });
+    const exists = networks.some((n: any) => n.Name === networkName);
+    if (!exists) {
+      await docker.createNetwork({
+        Name: networkName,
+        Driver: 'bridge',
+        CheckDuplicate: true,
+        Labels: {
+          'deployservice.managed': 'true',
+        },
+      });
+      logger.info({ networkName }, 'Created isolated build network');
+    }
+  } catch (err: any) {
+    if (err.statusCode === 409 || err.message?.includes('already exists')) {
+      return;
+    }
+    logger.error({ err: err.message, networkName }, 'Failed ensuring build network');
+    throw err;
+  }
+}
+
 /**
  * Startup reaper: forcefully removes any orphaned build containers and volumes
  * labeled with 'deployservice.managed=true' left over from previous crashes.
@@ -74,9 +110,9 @@ export async function reapOrphanedContainers(docker: Docker = getDockerClient())
 
         const ctr = docker.getContainer(info.Id);
         if (info.State === 'running' || info.State === 'restarting') {
-          await ctr.kill().catch(() => {});
+          await ctr.kill().catch(() => { });
         }
-        await ctr.remove({ force: true }).catch(() => {});
+        await ctr.remove({ force: true }).catch(() => { });
         reapedCount++;
       } catch (err: any) {
         logger.warn({ id: info.Id, err: err.message }, 'Failed to reap orphaned container');
@@ -92,7 +128,7 @@ export async function reapOrphanedContainers(docker: Docker = getDockerClient())
       for (const vol of volumes) {
         try {
           const v = docker.getVolume(vol.Name);
-          await v.remove({ force: true }).catch(() => {});
+          await v.remove({ force: true }).catch(() => { });
         } catch {
           // Volume might still be busy or already removed
         }
@@ -200,6 +236,9 @@ export async function executeBuild(
       started_at: new Date(),
     });
 
+    // Ensure dedicated build network exists before container creation
+    await ensureBuildNetwork(docker);
+
     // 2. Create isolated per-build volume
     await docker.createVolume({
       Name: volumeName,
@@ -271,7 +310,7 @@ export async function executeBuild(
         // Check if build phase has started
         if (!transitionedToBuilding && text.includes('[builder] Detected framework:')) {
           transitionedToBuilding = true;
-          updateDeploymentStatus(deploymentId, DeploymentStatus.BUILDING).catch(() => {});
+          updateDeploymentStatus(deploymentId, DeploymentStatus.BUILDING).catch(() => { });
         }
 
         if (logBytesCaptured < maxLogBytes) {
@@ -300,7 +339,7 @@ export async function executeBuild(
       isTimedOut = true;
       logger.warn({ deploymentId, timeoutMs }, 'Build exceeded wall-clock timeout. Force killing container...');
       if (container) {
-        await container.kill().catch(() => {});
+        await container.kill().catch(() => { });
       }
     }, timeoutMs);
 
@@ -411,10 +450,10 @@ export async function executeBuild(
 
     // Always clean up container and volume in finally
     if (container) {
-      await container.remove({ force: true }).catch(() => {});
+      await container.remove({ force: true }).catch(() => { });
     }
     if (volume) {
-      await volume.remove({ force: true }).catch(() => {});
+      await volume.remove({ force: true }).catch(() => { });
     }
   }
 }
