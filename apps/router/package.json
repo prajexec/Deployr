@@ -1,0 +1,21 @@
+{
+  "name": "@deployservice/router",
+  "version": "1.0.0",
+  "type": "module",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js"
+  },
+  "dependencies": {
+    "@deployservice/shared": "workspace:*",
+    "fastify": "^4.27.0",
+    "lru-cache": "^10.2.2",
+    "mime-types": "^2.1.35"
+  },
+  "devDependencies": {
+    "@types/mime-types": "^2.1.4",
+    "@types/node": "^20.14.0",
+    "typescript": "^5.4.5"
+  }
+}
