@@ -232,5 +232,41 @@ describe(
       expect(typeof result.containersReaped).toBe('number');
       expect(typeof result.volumesReaped).toBe('number');
     });
+
+    it('entrypoint defense-in-depth: passes hostile strings directly to container entrypoint, asserts no sentinel file and clean failure', async () => {
+      const sentinelFile = '/tmp/pwned';
+      if (fs.existsSync(sentinelFile)) {
+        fs.unlinkSync(sentinelFile);
+      }
+
+      const hostilePayloads = [
+        '--upload-pack=touch /tmp/pwned',
+        '$(touch /tmp/pwned)',
+        'https://github.com/foo/bar`touch /tmp/pwned`',
+        'https://github.com/foo/bar\ntouch /tmp/pwned',
+        'https://github.com/foo/bar touch /tmp/pwned',
+      ];
+
+      for (let i = 0; i < hostilePayloads.length; i++) {
+        const payload = hostilePayloads[i];
+        const id = `d-hostile-${Date.now()}-${i}`;
+
+        await createOrGetProject(`p-hostile-${i}`, 'https://github.com/vitejs/vite');
+        await createDeployment(id, `p-hostile-${i}`);
+
+        // Directly invoke executeBuild, bypassing validateRepoUrl
+        await expect(executeBuild(id, payload, { timeoutMs: 5000 })).rejects.toThrow();
+
+        // Assert sentinel file was NOT created on host
+        expect(
+          fs.existsSync(sentinelFile),
+          `Sentinel file must not exist for payload: ${payload}`
+        ).toBe(false);
+
+        // Assert deployment marked as failed
+        const dep = await getDeployment(id);
+        expect(dep?.status).toBe('failed');
+      }
+    });
   }
 );

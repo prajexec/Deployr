@@ -49,9 +49,9 @@ export function validateRepoUrl(urlStr: string): {
   }
 
   // Pathname must be /<owner>/<repo>[.git]
-  // GitHub usernames: 1-39 alphanumeric/hyphens
-  // GitHub repo names: 1-100 alphanumeric, hyphens, underscores, dots
-  const pathRegex = /^\/([a-zA-Z0-9_-]{1,100})\/([a-zA-Z0-9_.-]{1,100})(\.git)?$/;
+  // GitHub usernames: 1-39 alphanumeric/hyphens, cannot start with hyphen
+  // GitHub repo names: 1-100 alphanumeric, hyphens, underscores, dots, cannot start with hyphen
+  const pathRegex = /^\/([a-zA-Z0-9][a-zA-Z0-9_-]{0,99})\/([a-zA-Z0-9_][a-zA-Z0-9_.-]{0,99})(\.git)?$/;
   const match = parsed.pathname.match(pathRegex);
 
   if (!match) {
