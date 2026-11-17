@@ -45,7 +45,8 @@ docker compose up -d --build
 # Unit tests (runs without Docker dependencies)
 pnpm test
 
-# Integration tests (runs against Docker Postgres, Redis, MinIO)
+# Integration tests (runs against Docker Postgres, Redis, MinIO via dev port overlay)
+docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d
 pnpm test:integration
 ```
 
