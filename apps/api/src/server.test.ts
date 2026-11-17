@@ -179,6 +179,7 @@ describe('API Server', () => {
         id: 'prj_test123',
         name: 'facebook/react',
         repo_url: 'https://github.com/facebook/react',
+        current_deployment_id: null,
         created_at: new Date(),
       });
 
