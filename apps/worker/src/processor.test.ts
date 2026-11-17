@@ -1,7 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
+import { UnrecoverableError } from 'bullmq';
+import { InfrastructureError, UserBuildError } from '@deployservice/shared';
 import { processDeploymentJob } from './processor.js';
 
-describe('Worker Job Processor Security', () => {
+describe('Worker Job Processor Security & Retries', () => {
   it('cannot set enableHostInternalForTest or custom build options from BullMQ job data', async () => {
     const mockExecutor = vi.fn().mockResolvedValue(undefined);
 
@@ -32,5 +34,30 @@ describe('Worker Job Processor Security', () => {
 
     await processDeploymentJob('not-an-object', mockExecutor);
     expect(mockExecutor).toHaveBeenCalledWith('', '');
+  });
+
+  it('marks user build failures as UnrecoverableError so BullMQ does not retry them', async () => {
+    const mockExecutor = vi
+      .fn()
+      .mockRejectedValue(new UserBuildError('Syntax error in src/index.js', 1));
+
+    await expect(
+      processDeploymentJob(
+        { deploymentId: 'd-user-err', repoUrl: 'https://github.com/example/repo' },
+        mockExecutor
+      )
+    ).rejects.toThrow(UnrecoverableError);
+  });
+
+  it('re-throws infrastructure errors so BullMQ performs exponential retry', async () => {
+    const infraErr = new InfrastructureError('connect ECONNREFUSED /var/run/docker.sock');
+    const mockExecutor = vi.fn().mockRejectedValue(infraErr);
+
+    await expect(
+      processDeploymentJob(
+        { deploymentId: 'd-infra-err', repoUrl: 'https://github.com/example/repo' },
+        mockExecutor
+      )
+    ).rejects.toThrow(InfrastructureError);
   });
 });

@@ -48,3 +48,26 @@ export interface LogMessage {
   stream: 'stdout' | 'stderr' | 'system';
   line: string;
 }
+
+export class UserBuildError extends Error {
+  public readonly isUserError = true;
+  constructor(
+    message: string,
+    public readonly exitCode?: number,
+    public readonly logs?: string
+  ) {
+    super(message);
+    this.name = 'UserBuildError';
+  }
+}
+
+export class InfrastructureError extends Error {
+  public readonly isInfrastructureError = true;
+  constructor(
+    message: string,
+    public readonly cause?: Error
+  ) {
+    super(message);
+    this.name = 'InfrastructureError';
+  }
+}

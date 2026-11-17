@@ -16,7 +16,11 @@ export function getDeploymentQueue(): Queue<DeploymentJobPayload> {
     deploymentQueue = new Queue<DeploymentJobPayload>(DEPLOYMENT_QUEUE_NAME, {
       connection: redis,
       defaultJobOptions: {
-        attempts: 1, // Do not retry user build failures
+        attempts: 3,
+        backoff: {
+          type: 'exponential',
+          delay: 1000,
+        },
         removeOnComplete: { count: 100 },
         removeOnFail: { count: 100 },
       },

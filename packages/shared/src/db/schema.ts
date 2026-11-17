@@ -4,6 +4,7 @@ export const projects = pgTable('projects', {
   id: varchar('id', { length: 64 }).primaryKey(),
   name: varchar('name', { length: 255 }).notNull(),
   repo_url: text('repo_url').notNull(),
+  current_deployment_id: varchar('current_deployment_id', { length: 64 }),
   created_at: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
 });
 

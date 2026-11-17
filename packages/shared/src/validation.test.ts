@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { isValidDeploymentId, isValidSubdomain, validateRepoUrl } from './validation.js';
+import {
+  isValidDeploymentId,
+  isValidProjectId,
+  isValidSubdomain,
+  validateRepoUrl,
+} from './validation.js';
 
 describe('validateRepoUrl', () => {
   it('accepts valid GitHub repository URLs', () => {
@@ -124,5 +129,19 @@ describe('isValidDeploymentId & isValidSubdomain', () => {
     expect(isValidDeploymentId('0123456789abcdef0123456789abcdef')).toBe(false); // missing 'd-'
     expect(isValidDeploymentId('d-0123456789ABCDEF0123456789ABCDEF')).toBe(false); // uppercase
     expect(isValidDeploymentId('d-0123456789abcdef0123456789abcdeg')).toBe(false); // non-hex 'g'
+  });
+});
+
+describe('isValidProjectId', () => {
+  it('accepts valid prj_ prefix with 12 lowercase hex characters', () => {
+    expect(isValidProjectId('prj_0123456789ab')).toBe(true);
+    expect(isValidProjectId('prj_abcdef123456')).toBe(true);
+  });
+
+  it('rejects malformed project IDs', () => {
+    expect(isValidProjectId('prj_123')).toBe(false);
+    expect(isValidProjectId('prj_0123456789ag')).toBe(false);
+    expect(isValidProjectId('0123456789ab')).toBe(false);
+    expect(isValidProjectId('')).toBe(false);
   });
 });

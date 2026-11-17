@@ -8,7 +8,9 @@ import {
   DeploymentStatus,
   getDeployment,
   getObject,
+  getProject,
   isValidDeploymentId,
+  isValidProjectId,
   logger,
 } from '@deployservice/shared';
 
@@ -17,12 +19,13 @@ export interface RouterOptions {
 }
 
 /**
- * Validates subdomains against the 128-bit deployment ID format: ^d-[a-f0-9]{32}$
+ * Validates subdomains against the 128-bit deployment ID format (^d-[a-f0-9]{32}$)
+ * or the project ID format (^prj_[a-f0-9]{12}$).
  */
 export function extractAndValidateSubdomain(hostHeader: string | undefined): string | null {
   if (!hostHeader) return null;
 
-  // Strip port if present: "d-0123456789abcdef0123456789abcdef.localhost:8080" -> "d-..."
+  // Strip port if present: "d-...localhost:8080" -> "d-..."
   const hostWithoutPort = hostHeader.split(':')[0];
 
   // Split subdomain from domain: e.g. "d-...localhost" -> ["d-...", "localhost"]
@@ -30,7 +33,7 @@ export function extractAndValidateSubdomain(hostHeader: string | undefined): str
   if (parts.length < 2) return null;
 
   const subdomain = parts[0];
-  if (!isValidDeploymentId(subdomain)) {
+  if (!isValidDeploymentId(subdomain) && !isValidProjectId(subdomain)) {
     return null;
   }
 
@@ -119,23 +122,44 @@ export function buildRouter(opts: RouterOptions = {}): FastifyInstance {
 
   app.all('/*', async (request, reply) => {
     const hostHeader = request.headers.host;
-    const deploymentId = extractAndValidateSubdomain(hostHeader);
+    const identifier = extractAndValidateSubdomain(hostHeader);
 
-    if (!deploymentId) {
+    if (!identifier) {
       return reply.status(400).send({
         error: 'Invalid or missing subdomain. Format must be http://<id>.localhost:8080',
       });
     }
 
+    let resolvedDeploymentId: string | null = null;
+
+    if (isValidDeploymentId(identifier)) {
+      resolvedDeploymentId = identifier;
+    } else if (isValidProjectId(identifier)) {
+      // Resolve project's active deployment pointer
+      const project = await getProject(identifier);
+      if (!project || !project.current_deployment_id) {
+        return reply.status(404).send({
+          error: `Project '${identifier}' has no active deployed release.`,
+        });
+      }
+      resolvedDeploymentId = project.current_deployment_id;
+    }
+
+    if (!resolvedDeploymentId) {
+      return reply.status(404).send({
+        error: `Could not resolve active deployment for '${identifier}'.`,
+      });
+    }
+
     // Lookup deployment (cached)
-    let cached = deploymentCache.get(deploymentId);
+    let cached = deploymentCache.get(resolvedDeploymentId);
     let deployment: DeploymentRecord | null = null;
     if (cached !== undefined) {
       deployment = cached.found ? cached.record : null;
     } else {
-      deployment = await getDeployment(deploymentId);
+      deployment = await getDeployment(resolvedDeploymentId);
       deploymentCache.set(
-        deploymentId,
+        resolvedDeploymentId,
         deployment ? { found: true, record: deployment } : { found: false }
       );
     }
@@ -143,7 +167,7 @@ export function buildRouter(opts: RouterOptions = {}): FastifyInstance {
     // Only serve deployments in 'deployed' state
     if (!deployment || deployment.status !== DeploymentStatus.DEPLOYED) {
       return reply.status(404).send({
-        error: `Site '${deploymentId}' is not found or has not been deployed yet.`,
+        error: `Site '${identifier}' is not found or has not been deployed yet.`,
       });
     }
 
@@ -155,7 +179,7 @@ export function buildRouter(opts: RouterOptions = {}): FastifyInstance {
       return reply.status(400).send({ error: 'Path traversal or invalid characters detected.' });
     }
 
-    const s3Prefix = `deployments/${deploymentId}`;
+    const s3Prefix = `deployments/${resolvedDeploymentId}`;
 
     // Helper to fetch S3 object
     async function fetchS3Object(s3Key: string) {

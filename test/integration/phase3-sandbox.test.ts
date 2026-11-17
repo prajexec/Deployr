@@ -83,6 +83,16 @@ describe(
           } as any;
         }
       );
+
+      const mockRedis = {
+        xadd: vi.fn().mockResolvedValue('1-0'),
+        expire: vi.fn().mockResolvedValue(1),
+        xrange: vi.fn().mockResolvedValue([]),
+        publish: vi.fn().mockResolvedValue(1),
+      };
+      vi.spyOn(await import('@deployservice/shared'), 'getRedisClient').mockReturnValue(
+        mockRedis as any
+      );
     });
 
     function seedDeployment(id: string) {

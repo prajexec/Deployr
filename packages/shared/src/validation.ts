@@ -91,6 +91,17 @@ export function isValidDeploymentId(id: string): boolean {
 }
 
 /**
+ * Validates a project ID.
+ * Format: 'prj_' followed by 12 lowercase hex characters.
+ */
+export const PROJECT_ID_REGEX = /^prj_[a-f0-9]{12}$/;
+
+export function isValidProjectId(id: string): boolean {
+  if (!id || typeof id !== 'string') return false;
+  return PROJECT_ID_REGEX.test(id);
+}
+
+/**
  * Validates and sanitizes a deployment ID for use as a subdomain.
  * Subdomains must strictly match the 128-bit deployment ID format.
  */

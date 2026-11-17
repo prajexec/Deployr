@@ -1,5 +1,5 @@
 import crypto from 'node:crypto';
-import { desc, eq } from 'drizzle-orm';
+import { and, desc, eq, inArray, lt, ne } from 'drizzle-orm';
 import { assertTransition } from '../state-machine.js';
 import { DeploymentStatus, DeploymentStatusType } from '../types.js';
 import { getDb } from './index.js';
@@ -90,4 +90,109 @@ export async function updateDeploymentStatus(
     .returning();
 
   return updated;
+}
+
+export async function getProject(id: string): Promise<ProjectRecord | null> {
+  const db = getDb();
+  const rows = await db.select().from(projects).where(eq(projects.id, id)).limit(1);
+  return rows[0] || null;
+}
+
+export async function setProjectCurrentDeployment(
+  projectId: string,
+  deploymentId: string
+): Promise<ProjectRecord> {
+  const db = getDb();
+  const [updated] = await db
+    .update(projects)
+    .set({
+      current_deployment_id: deploymentId,
+    })
+    .where(eq(projects.id, projectId))
+    .returning();
+
+  if (!updated) {
+    throw new Error(`Project with id '${projectId}' not found`);
+  }
+  return updated;
+}
+
+export async function getProjectDeployments(projectId: string): Promise<DeploymentRecord[]> {
+  const db = getDb();
+  return await db
+    .select()
+    .from(deployments)
+    .where(eq(deployments.project_id, projectId))
+    .orderBy(desc(deployments.created_at));
+}
+
+export async function rollbackProjectDeployment(
+  projectId: string,
+  targetDeploymentId?: string
+): Promise<{ project: ProjectRecord; deployment: DeploymentRecord }> {
+  const db = getDb();
+  const project = await getProject(projectId);
+  if (!project) {
+    throw new Error(`Project with id '${projectId}' not found`);
+  }
+
+  let targetDeployment: DeploymentRecord | null = null;
+
+  if (targetDeploymentId) {
+    targetDeployment = await getDeployment(targetDeploymentId);
+    if (!targetDeployment || targetDeployment.project_id !== projectId) {
+      throw new Error(
+        `Target deployment '${targetDeploymentId}' does not belong to project '${projectId}'`
+      );
+    }
+    if (targetDeployment.status !== DeploymentStatus.DEPLOYED) {
+      throw new Error(
+        `Target deployment '${targetDeploymentId}' is not in deployed status (current: ${targetDeployment.status})`
+      );
+    }
+  } else {
+    // Find the latest successfully deployed release other than the current one
+    const eligibleDeployments = await db
+      .select()
+      .from(deployments)
+      .where(
+        and(
+          eq(deployments.project_id, projectId),
+          eq(deployments.status, DeploymentStatus.DEPLOYED),
+          project.current_deployment_id
+            ? ne(deployments.id, project.current_deployment_id)
+            : undefined
+        )
+      )
+      .orderBy(desc(deployments.finished_at), desc(deployments.created_at))
+      .limit(1);
+
+    if (eligibleDeployments.length === 0) {
+      throw new Error(`No previous successful deployment found for project '${projectId}'`);
+    }
+    targetDeployment = eligibleDeployments[0];
+  }
+
+  const updatedProject = await setProjectCurrentDeployment(projectId, targetDeployment.id);
+  return { project: updatedProject, deployment: targetDeployment };
+}
+
+export async function getStuckDeployments(maxAgeMs = 10 * 60 * 1000): Promise<DeploymentRecord[]> {
+  const db = getDb();
+
+  const statusCondition = inArray(deployments.status, [
+    DeploymentStatus.CLONING,
+    DeploymentStatus.BUILDING,
+    DeploymentStatus.UPLOADING,
+  ]);
+
+  if (maxAgeMs <= 0) {
+    return await db.select().from(deployments).where(statusCondition);
+  }
+
+  const cutoff = new Date(Date.now() - maxAgeMs);
+  return await db
+    .select()
+    .from(deployments)
+    .where(and(statusCondition, lt(deployments.created_at, cutoff)));
 }
