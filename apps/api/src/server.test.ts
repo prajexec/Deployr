@@ -478,6 +478,64 @@ describe('API Server', () => {
     });
   });
 
+  describe('GET /projects/:id', () => {
+    const VALID_PROJECT_ID = 'prj_0123456789ab';
+
+    it('requires API key authentication', async () => {
+      const app = buildServer();
+      const res = await app.inject({
+        method: 'GET',
+        url: `/projects/${VALID_PROJECT_ID}`,
+      });
+      expect(res.statusCode).toBe(401);
+      await app.close();
+    });
+
+    it('rejects malformed project ID with 400', async () => {
+      const app = buildServer();
+      const res = await app.inject({
+        method: 'GET',
+        url: '/projects/invalid-id',
+        headers: { 'x-api-key': testApiKey },
+      });
+      expect(res.statusCode).toBe(400);
+      await app.close();
+    });
+
+    it('returns 404 when project not found', async () => {
+      vi.spyOn(shared, 'getProject').mockResolvedValue(null);
+      const app = buildServer();
+      const res = await app.inject({
+        method: 'GET',
+        url: `/projects/${VALID_PROJECT_ID}`,
+        headers: { 'x-api-key': testApiKey },
+      });
+      expect(res.statusCode).toBe(404);
+      await app.close();
+    });
+
+    it('returns project details when found', async () => {
+      vi.spyOn(shared, 'getProject').mockResolvedValue({
+        id: VALID_PROJECT_ID,
+        name: 'facebook/react',
+        repo_url: 'https://github.com/facebook/react',
+        current_deployment_id: VALID_ID,
+        created_at: new Date(),
+      });
+      const app = buildServer();
+      const res = await app.inject({
+        method: 'GET',
+        url: `/projects/${VALID_PROJECT_ID}`,
+        headers: { 'x-api-key': testApiKey },
+      });
+      expect(res.statusCode).toBe(200);
+      const body = JSON.parse(res.body);
+      expect(body.id).toBe(VALID_PROJECT_ID);
+      expect(body.current_deployment_id).toBe(VALID_ID);
+      await app.close();
+    });
+  });
+
   describe('GET /deployments/:id/logs (SSE & Historical Logs)', () => {
     it('rejects malformed deployment IDs with 400', async () => {
       const app = buildServer();
