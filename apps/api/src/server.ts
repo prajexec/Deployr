@@ -72,6 +72,13 @@ export function buildServer(): FastifyInstance {
       },
     },
     async (request, reply) => {
+      const contentType = request.headers['content-type'];
+      if (!contentType || !contentType.includes('application/json')) {
+        return reply.status(415).send({
+          error: 'Unsupported Media Type: Content-Type must be application/json',
+        });
+      }
+
       const body = (
         typeof request.body === 'object' && request.body !== null ? request.body : {}
       ) as { repoUrl?: string };
