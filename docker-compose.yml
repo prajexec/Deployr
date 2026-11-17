@@ -57,7 +57,7 @@ services:
       S3_BUCKET: deployments
       S3_FORCE_PATH_STYLE: 'true'
     ports:
-      - '3000:3000'
+      - '127.0.0.1:3000:3000'
     depends_on:
       postgres:
         condition: service_healthy
@@ -123,7 +123,7 @@ services:
       S3_BUCKET: deployments
       S3_FORCE_PATH_STYLE: 'true'
     ports:
-      - '8080:8080'
+      - '127.0.0.1:8080:8080'
     depends_on:
       postgres:
         condition: service_healthy
@@ -136,7 +136,7 @@ services:
       dockerfile: apps/web/Dockerfile
     container_name: deployservice-web
     ports:
-      - '5173:5173'
+      - '127.0.0.1:5173:5173'
     depends_on:
       - api
 

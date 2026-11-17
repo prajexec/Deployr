@@ -182,6 +182,26 @@ describe(
       expect(auditProof.positiveControl).toBe(true);
       expect(typeof auditProof.gateway).toBe('string');
       expect(auditProof.probeResults).toBeDefined();
+
+      if (auditProof.devOverlayActive) {
+        // With overlay ON: probe to published port on host gateway MUST connect (positive control)
+        const canReachPublished =
+          auditProof.probeResults['host.docker.internal']?.[5432] ||
+          auditProof.probeResults['host.docker.internal']?.[6379] ||
+          auditProof.probeResults['host.docker.internal']?.[3000];
+        expect(
+          canReachPublished,
+          'Probe must connect to published ports when dev overlay is ON'
+        ).toBe(true);
+      } else {
+        // With overlay OFF: internal ports (5432, 6379, 9000, 9001) must fail to connect
+        expect(auditProof.probeResults['host.docker.internal']?.[5432]).toBe(false);
+        expect(auditProof.probeResults['host.docker.internal']?.[6379]).toBe(false);
+        expect(auditProof.probeResults['host.docker.internal']?.[9000]).toBe(false);
+        expect(auditProof.probeResults['host.docker.internal']?.[9001]).toBe(false);
+      }
+
+      console.log('AUDIT_PROOF_JSON:' + JSON.stringify(auditProof));
     });
 
     it('realistic mid-size Vite/React app: compiles cleanly within 512MB RAM and serves via router', async () => {
@@ -243,12 +263,7 @@ describe(
       expect(typeof result.volumesReaped).toBe('number');
     });
 
-    it('entrypoint defense-in-depth: passes hostile strings directly to container entrypoint, asserts no sentinel file and clean failure', async () => {
-      const sentinelFile = '/tmp/pwned';
-      if (fs.existsSync(sentinelFile)) {
-        fs.unlinkSync(sentinelFile);
-      }
-
+    it('entrypoint defense-in-depth: passes hostile strings directly to container entrypoint, asserts in-container exit code 1, validation log, and git never executed', async () => {
       const hostilePayloads = [
         '--upload-pack=touch /tmp/pwned',
         '$(touch /tmp/pwned)',
@@ -262,14 +277,19 @@ describe(
         const id = `d-hostile-${Date.now()}-${i}`;
         seedDeployment(id);
 
-        // Directly invoke executeBuild, bypassing validateRepoUrl
-        await expect(executeBuild(id, payload, { timeoutMs: 5000 })).rejects.toThrow();
+        let thrownErr: any = null;
+        try {
+          // Directly invoke executeBuild, bypassing validateRepoUrl
+          await executeBuild(id, payload, { timeoutMs: 5000 });
+        } catch (err: any) {
+          thrownErr = err;
+        }
 
-        // Assert sentinel file was NOT created on host
-        expect(
-          fs.existsSync(sentinelFile),
-          `Sentinel file must not exist for payload: ${payload}`
-        ).toBe(false);
+        expect(thrownErr).not.toBeNull();
+        expect(thrownErr.exitCode).toBe(1);
+        expect(thrownErr.logs).toMatch(/\[builder\] ERROR: REPO_URL/);
+        expect(thrownErr.logs).not.toContain('[builder] Cloning repository:');
+        expect(thrownErr.logs).not.toContain('Cloned commit:');
 
         // Assert deployment marked as failed
         const dep = await getDeployment(id);

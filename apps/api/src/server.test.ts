@@ -117,6 +117,21 @@ describe('API Server', () => {
 
       await app.close();
     });
+
+    it('rejects requests with non-JSON Content-Type', async () => {
+      const app = buildServer();
+      const res = await app.inject({
+        method: 'POST',
+        url: '/deployments',
+        headers: {
+          'content-type': 'text/plain',
+        },
+        payload: 'https://github.com/facebook/react',
+      });
+
+      expect(res.statusCode).toBe(415);
+      await app.close();
+    });
   });
 
   describe('GET /deployments/:id', () => {
