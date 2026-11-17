@@ -2,6 +2,7 @@ import { Worker } from 'bullmq';
 import { getConfig, getRedisClient, logger } from '@deployservice/shared';
 import { ensureBuildNetwork, reapOrphanedContainers } from './builder.js';
 import { processDeploymentJob } from './processor.js';
+import { recoverStuckDeployments } from './recovery.js';
 
 const config = getConfig();
 const redis = getRedisClient();
@@ -9,6 +10,7 @@ const redis = getRedisClient();
 logger.info({ concurrency: config.MAX_CONCURRENT_BUILDS }, 'Starting deployment worker...');
 
 let worker: Worker | null = null;
+let recoveryInterval: NodeJS.Timeout | null = null;
 
 async function bootstrap() {
   // 1. Clean up orphaned containers/volumes from previous crashes
@@ -24,7 +26,22 @@ async function bootstrap() {
     logger.warn({ err: err.message }, 'Failed during startup orphan container reaping');
   }
 
-  // 2. Ensure isolated build network exists before processing any jobs
+  // 2. Recover any stuck deployments in Postgres left by previous crashed worker
+  try {
+    const { recoveredCount, recoveredDeploymentIds } = await recoverStuckDeployments({
+      includeAllOnStartup: true,
+    });
+    if (recoveredCount > 0) {
+      logger.info(
+        { recoveredCount, recoveredDeploymentIds },
+        'Recovered stuck deployments on worker startup'
+      );
+    }
+  } catch (err: any) {
+    logger.warn({ err: err.message }, 'Failed during startup stuck deployment recovery');
+  }
+
+  // 3. Ensure isolated build network exists before processing any jobs
   try {
     await ensureBuildNetwork();
   } catch (err: any) {
@@ -55,6 +72,13 @@ async function bootstrap() {
   worker.on('failed', (job, err) => {
     logger.error({ jobId: job?.id, err: err.message }, 'Job failed');
   });
+
+  // Periodic recovery sweep every 60 seconds
+  recoveryInterval = setInterval(() => {
+    recoverStuckDeployments().catch((err: any) => {
+      logger.warn({ err: err.message }, 'Error in periodic stuck deployment recovery');
+    });
+  }, 60 * 1000);
 }
 
 bootstrap().catch((err) => {
@@ -65,6 +89,10 @@ bootstrap().catch((err) => {
 const shutdown = async (signal: string) => {
   logger.info({ signal }, 'Worker shutting down gracefully...');
   try {
+    if (recoveryInterval) {
+      clearInterval(recoveryInterval);
+      recoveryInterval = null;
+    }
     if (worker) {
       await worker.close();
     }

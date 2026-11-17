@@ -179,19 +179,20 @@ export async function rollbackProjectDeployment(
 
 export async function getStuckDeployments(maxAgeMs = 10 * 60 * 1000): Promise<DeploymentRecord[]> {
   const db = getDb();
-  const cutoff = new Date(Date.now() - maxAgeMs);
 
+  const statusCondition = inArray(deployments.status, [
+    DeploymentStatus.CLONING,
+    DeploymentStatus.BUILDING,
+    DeploymentStatus.UPLOADING,
+  ]);
+
+  if (maxAgeMs <= 0) {
+    return await db.select().from(deployments).where(statusCondition);
+  }
+
+  const cutoff = new Date(Date.now() - maxAgeMs);
   return await db
     .select()
     .from(deployments)
-    .where(
-      and(
-        inArray(deployments.status, [
-          DeploymentStatus.CLONING,
-          DeploymentStatus.BUILDING,
-          DeploymentStatus.UPLOADING,
-        ]),
-        lt(deployments.created_at, cutoff)
-      )
-    );
+    .where(and(statusCondition, lt(deployments.created_at, cutoff)));
 }

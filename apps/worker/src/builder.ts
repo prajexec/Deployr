@@ -44,7 +44,7 @@ export function getMimeType(filePath: string): string {
 }
 
 let dockerInstance: Docker | null = null;
-const activeDeployments = new Set<string>();
+export const activeDeployments = new Set<string>();
 
 export function getDockerClient(): Docker {
   if (!dockerInstance) {
