@@ -59,8 +59,9 @@ This document records architectural decisions made throughout the design and imp
 - **Alternatives Considered**:
   1. *MinIO JavaScript SDK*: Good, but locks the codebase into MinIO-specific APIs instead of the universal AWS S3 standard SDK.
   2. *Local filesystem storage (`/var/data/sites`)*: Violates the twelve-factor app statelessness principle and prevents scaling workers or routers independently across multiple nodes or containers.
-- **Why this one**: AWS SDK S3 client is the cloud-native industry standard. With `forcePathStyle: true`, the exact same client code works seamlessly with self-hosted MinIO locally and with AWS S3, Cloudflare R2, or Google Cloud Storage in production without code changes.
+- **Why this one**: AWS SDK S3 client is the cloud-native industry standard. With `forcePathStyle: true`, the exact same client code is S3-compatible and works seamlessly with self-hosted MinIO locally and with other S3-compatible object stores in production without code changes.
 - **Trade-offs**: Local MinIO requires an initialization step to guarantee bucket existence prior to the first upload.
+- **Container Image Pinning**: The `minio/minio` image on Docker Hub returned `pull access denied` without authentication in our environment. We pinned an immutable digest from Chainguard (`cgr.dev/chainguard/minio@sha256:59953701f8f8d0de81aab456f0b0b6c0a1804119415559bf7ede79d944108879`) to guarantee reproducible, zero-cost, login-free local setup.
 
 ---
 
