@@ -374,6 +374,34 @@ export function buildServer(): FastifyInstance {
     }
   });
 
+  // GET /projects/:id (Requires API Key)
+  fastify.get('/projects/:id', async (request, reply) => {
+    if (!requireApiKey(request, reply, apiKey)) {
+      return;
+    }
+
+    const { id } = request.params as { id: string };
+
+    if (!isValidProjectId(id)) {
+      return reply.status(400).send({
+        error:
+          "Invalid project ID format. Expected 'prj_' followed by 12 lowercase hex characters.",
+      });
+    }
+
+    try {
+      const project = await getProject(id);
+      if (!project) {
+        return reply.status(404).send({ error: `Project '${id}' not found` });
+      }
+
+      return reply.status(200).send(project);
+    } catch (err: any) {
+      logger.error({ err, id }, 'Failed to fetch project');
+      return reply.status(500).send({ error: 'Internal server error' });
+    }
+  });
+
   // GET /deployments/:id/logs (Capability URL - SSE Live Streaming & Raw Logs)
   fastify.get('/deployments/:id/logs', async (request, reply) => {
     const { id } = request.params as { id: string };

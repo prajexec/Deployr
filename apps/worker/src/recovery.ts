@@ -1,6 +1,9 @@
 import Docker from 'dockerode';
+import { Queue } from 'bullmq';
 import {
+  DEPLOYMENT_QUEUE_NAME,
   DeploymentStatus,
+  getConfig,
   getRedisClient,
   getStuckDeployments,
   logger,
@@ -11,8 +14,9 @@ import { DeploymentLogWriter } from './stream-writer.js';
 
 export interface RecoveryOptions {
   dockerClient?: Docker;
-  maxAgeMs?: number;
-  includeAllOnStartup?: boolean;
+  redisClient?: any;
+  queue?: Queue<any>;
+  buildTimeoutMs?: number;
 }
 
 export interface RecoveryResult {
@@ -23,20 +27,62 @@ export interface RecoveryResult {
 /**
  * Recovers stuck deployments left in cloning/building/uploading states
  * after an unexpected worker crash or termination.
+ *
+ * Never marks a deployment failed if it is:
+ * 1. In this worker's activeDeployments
+ * 2. Queued or active in BullMQ
+ * 3. Younger than the build timeout
  */
 export async function recoverStuckDeployments(
   options: RecoveryOptions = {}
 ): Promise<RecoveryResult> {
   const docker = options.dockerClient || getDockerClient();
-  const redis = getRedisClient();
-  const maxAgeMs = options.includeAllOnStartup ? 0 : (options.maxAgeMs ?? 5 * 60 * 1000);
+  const redis = options.redisClient || getRedisClient();
+  const buildTimeoutMs = options.buildTimeoutMs ?? getConfig().BUILD_TIMEOUT_MS ?? 5 * 60 * 1000;
 
-  const stuckRows = await getStuckDeployments(maxAgeMs);
+  const stuckRows = await getStuckDeployments(buildTimeoutMs);
   const recoveredIds: string[] = [];
 
+  if (stuckRows.length === 0) {
+    return { recoveredCount: 0, recoveredDeploymentIds: [] };
+  }
+
+  // Query BullMQ for active or queued jobs to avoid reaping live tasks
+  const bullMqDeploymentIds = new Set<string>();
+  let tempQueue: Queue<any> | null = null;
+  const queue =
+    options.queue || (tempQueue = new Queue(DEPLOYMENT_QUEUE_NAME, { connection: redis }));
+
+  try {
+    const jobs = await queue.getJobs(['waiting', 'active', 'delayed', 'prioritized']);
+    for (const job of jobs) {
+      if (job.data?.deploymentId) {
+        bullMqDeploymentIds.add(job.data.deploymentId);
+      }
+    }
+  } catch (err: any) {
+    logger.warn({ err: err.message }, 'Failed querying BullMQ jobs during recovery');
+  } finally {
+    if (tempQueue) {
+      await tempQueue.close().catch(() => {});
+    }
+  }
+
+  const now = Date.now();
   for (const dep of stuckRows) {
-    // If currently active in memory on this worker, skip
+    // 1. If currently active in memory on this worker, skip
     if (activeDeployments.has(dep.id)) {
+      continue;
+    }
+
+    // 2. If queued or active in BullMQ, skip
+    if (bullMqDeploymentIds.has(dep.id)) {
+      continue;
+    }
+
+    // 3. If younger than the build timeout, skip
+    const startTime = new Date(dep.started_at || dep.created_at).getTime();
+    if (now - startTime < buildTimeoutMs) {
       continue;
     }
 

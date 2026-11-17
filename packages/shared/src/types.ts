@@ -1,3 +1,5 @@
+export const DEPLOYMENT_QUEUE_NAME = 'deployments';
+
 export const DeploymentStatus = {
   QUEUED: 'queued',
   CLONING: 'cloning',
