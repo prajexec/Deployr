@@ -44,6 +44,9 @@ docker compose up -d --build
 
 `docker compose up -d --build` builds all application containers and the isolated sandbox builder image (`deployservice-builder:latest`). The worker automatically and idempotently creates the dedicated build bridge network (`deployservice-build-net`) on startup before processing any build jobs. No manual Docker network or image management is required.
 
+> [!NOTE]
+> All published host ports across `docker-compose.yml` (API `3000`, Router `8080`, Web `5173`) and `docker-compose.dev.yml` (Postgres, Redis, MinIO) are explicitly bound to loopback `127.0.0.1` to prevent services from being exposed to the local area network (LAN).
+
 ### 3. Run Tests
 
 ```bash
