@@ -1,3 +1,4 @@
+import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -172,6 +173,15 @@ describe(
       const record = deploymentsStore.get(id);
       expect(record?.status).toBe(DeploymentStatus.DEPLOYED);
       expect(storageStore.has(`deployments/${id}/index.html`)).toBe(true);
+
+      // Verify the audit execution proof in the deployed artifacts
+      const auditProofItem = storageStore.get(`deployments/${id}/audit-proof.json`);
+      expect(auditProofItem, 'Audit proof artifact must be captured in storage').toBeDefined();
+      const auditProof = JSON.parse(auditProofItem!.body.toString('utf-8'));
+
+      expect(auditProof.positiveControl).toBe(true);
+      expect(typeof auditProof.gateway).toBe('string');
+      expect(auditProof.probeResults).toBeDefined();
     });
 
     it('realistic mid-size Vite/React app: compiles cleanly within 512MB RAM and serves via router', async () => {
@@ -250,9 +260,7 @@ describe(
       for (let i = 0; i < hostilePayloads.length; i++) {
         const payload = hostilePayloads[i];
         const id = `d-hostile-${Date.now()}-${i}`;
-
-        await createOrGetProject(`p-hostile-${i}`, 'https://github.com/vitejs/vite');
-        await createDeployment(id, `p-hostile-${i}`);
+        seedDeployment(id);
 
         // Directly invoke executeBuild, bypassing validateRepoUrl
         await expect(executeBuild(id, payload, { timeoutMs: 5000 })).rejects.toThrow();

@@ -35,11 +35,14 @@ Every build container is enforced with:
 - **Internal Service Segregation**: Internal database and cache services (`postgres`, `redis`, `minio`) run on the compose network (`deployservice-network`). Containers on `deployservice-build-net` cannot resolve or reach these services by hostname (NXDOMAIN).
 - **Unpublished Internal Ports**: In the default `docker-compose.yml`, internal ports for `postgres` (5432), `redis` (6379), and `minio` (9000, 9001) are **NOT published** to the host interface. Development port mappings are moved to `docker-compose.dev.yml`.
 
-### Known Network Limitations
+### Known Network Limitations & Dev Overlay Differences
 
-1. **Outbound Internet Egress**: Build containers require outbound internet access to fetch public git repositories from `github.com` and npm dependencies from `registry.npmjs.org`.
-2. **Host Gateway Reachability**: Standard Docker bridge networking routes packets to the Docker host's gateway interface (`172.17.0.1` or host IP).
-3. **Published Ports Reachable from Containers**: Ports published on the host by `docker-compose.yml` (specifically the API server on port `3000` and the Router on port `8080`) are reachable by build containers via the host gateway IP. The internal services (`postgres:5432`, `redis:6379`, `minio:9000`) are NOT published and are unreachable.
+1. **Outbound Internet Egress**: Build containers require outbound internet access to fetch public git repositories from `github.com` and npm dependencies from `registry.npmjs.org`. Positive control canary tests verify outbound access during audit tests.
+2. **Host Gateway Reachability**: Standard Docker bridge networking routes packets to the Docker host's gateway interface (dynamically determined from `/proc/net/route`, typically `172.18.0.1` or `172.19.0.1`, or host gateway).
+3. **Published Ports Reachable from Containers**: Ports published on the host by `docker-compose.yml` (specifically the API server on port `3000` and the Router on port `8080`) are reachable by build containers via the host gateway IP.
+4. **Dev Overlay Difference**:
+   - **Production (default `docker-compose.yml`)**: Internal ports (`postgres:5432`, `redis:6379`, `minio:9000`, `minio:9001`) are unmapped from the host and strictly unreachable by service name or host gateway IP.
+   - **Development (`docker-compose.dev.yml`)**: Internal ports are published to `0.0.0.0` on the host for local developer CLI/GUI access. When the dev overlay is enabled, isolation against the host gateway IP on these ports is **not guaranteed** by design because Docker forwards host traffic. Production deployments must not run with the dev overlay.
 
 ---
 

@@ -40,18 +40,22 @@ export function validateRepoUrl(urlStr: string): {
     return { valid: false, error: `Host '${host}' is not allowed. Only github.com is supported.` };
   }
 
-  // Reject port specifications, usernames, passwords
+  // Reject port specifications, usernames, passwords, query parameters, and hashes
   if (parsed.port) {
     return { valid: false, error: 'Custom ports are not allowed in repository URLs.' };
   }
   if (parsed.username || parsed.password) {
     return { valid: false, error: 'Credentials in repository URLs are not allowed.' };
   }
+  if (parsed.search || parsed.hash) {
+    return { valid: false, error: 'Query parameters and URL hashes are not allowed.' };
+  }
 
   // Pathname must be /<owner>/<repo>[.git]
   // GitHub usernames: 1-39 alphanumeric/hyphens, cannot start with hyphen
   // GitHub repo names: 1-100 alphanumeric, hyphens, underscores, dots, cannot start with hyphen
-  const pathRegex = /^\/([a-zA-Z0-9][a-zA-Z0-9_-]{0,99})\/([a-zA-Z0-9_][a-zA-Z0-9_.-]{0,99})(\.git)?$/;
+  const pathRegex =
+    /^\/([a-zA-Z0-9][a-zA-Z0-9_-]{0,99})\/([a-zA-Z0-9_][a-zA-Z0-9_.-]{0,99})(\.git)?$/;
   const match = parsed.pathname.match(pathRegex);
 
   if (!match) {

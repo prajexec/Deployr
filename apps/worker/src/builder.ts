@@ -130,13 +130,19 @@ export async function reapOrphanedContainers(
 
           const ctr = docker.getContainer(info.Id);
           await ctr.kill().catch((err: any) => {
-            logger.warn({ id: info.Id, err: err.message }, 'Failed killing orphaned container during reap');
+            logger.warn(
+              { id: info.Id, err: err.message },
+              'Failed killing orphaned container during reap'
+            );
           });
         }
 
         const ctr = docker.getContainer(info.Id);
         await ctr.remove({ force: true }).catch((err: any) => {
-          logger.warn({ id: info.Id, err: err.message }, 'Failed removing orphaned container during reap');
+          logger.warn(
+            { id: info.Id, err: err.message },
+            'Failed removing orphaned container during reap'
+          );
         });
         containersReaped++;
       } catch (err: any) {
@@ -165,7 +171,10 @@ export async function reapOrphanedContainers(
 
           const v = docker.getVolume(vol.Name);
           await v.remove({ force: true }).catch((err: any) => {
-            logger.warn({ name: vol.Name, err: err.message }, 'Failed removing orphaned volume during reap');
+            logger.warn(
+              { name: vol.Name, err: err.message },
+              'Failed removing orphaned volume during reap'
+            );
           });
           volumesReaped++;
         } catch (err: any) {
