@@ -1,0 +1,11 @@
+packages:
+  - 'packages/*'
+  - 'apps/*'
+
+allowBuilds:
+  cpu-features: true
+  es5-ext: true
+  esbuild: true
+  msgpackr-extract: true
+  protobufjs: true
+  ssh2: true
