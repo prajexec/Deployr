@@ -95,8 +95,11 @@ services:
         condition: service_healthy
       minio:
         condition: service_healthy
+      builder:
+        condition: service_completed_successfully
 
   builder:
+    container_name: deployservice-builder
     image: deployservice-builder:latest
     build:
       context: .
@@ -145,5 +148,3 @@ volumes:
 networks:
   default:
     name: deployservice-network
-  build-net:
-    name: deployservice-build-net
