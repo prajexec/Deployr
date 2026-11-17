@@ -73,3 +73,56 @@ This document records architectural decisions made throughout the design and imp
   2. *Let worker and router run a single log statement and exit*: Containers would enter `Exited (0)` status, causing confusion as to whether services crashed or completed.
 - **Why this one**: Provides stable, running containers that pass compose health checks and orchestration wiring in Phase 1, while clearly marking the boundaries where Phase 2 logic (BullMQ consumer in worker, wildcard request routing in router) will be implemented.
 - **Trade-offs**: Temporary scaffolding code in `apps/worker/src/index.ts` and `apps/router/src/index.ts` that will be replaced in Phase 2.
+
+---
+
+## 7. Strict Repository URL Allowlist for SSRF Prevention
+
+- **Decision**: Limit deployment input URLs strictly to HTTPS GitHub repositories matching `^https:\/\/github\.com\/([a-zA-Z0-9_.-]+)\/([a-zA-Z0-9_.-]+?)(\.git)?\/?$`. Reject all other schemes (`http://`, `file://`, `ssh://`), ports, IP literals, credentials, and non-GitHub hosts.
+- **Alternatives Considered**:
+  1. *Permit generic git URLs (`https://*` or `git@*`)*: Requires resolving DNS hostnames, checking private subnet IP ranges (RFC 1918, RFC 3927 link-local, AWS metadata endpoints `169.254.169.254`), and managing SSH known hosts / key authentication.
+  2. *Allow any HTTP/HTTPS URL*: Exposes the host and worker to SSRF, local port scanning, and internal network probing.
+- **Why this one**: A strict allowlist is immune to DNS rebinding, internal network scanning, and protocol injection attacks while completely fulfilling the user goal ("A user pastes a public Git repository URL").
+- **Trade-offs**: Other public git providers (GitLab, Bitbucket, self-hosted Gitea) are currently disallowed without extending the validation allowlist.
+
+---
+
+## 8. Zero-Config Framework Detection and Build Output Resolution
+
+- **Decision**: Detect build configuration heuristically from root files:
+  - If `vite.config.*` is present: framework is `vite`, output directory is `dist`, commands: `npm install && npm run build`.
+  - If `package.json` contains `react-scripts`: framework is `cra`, output directory is `build`, commands: `npm install && npm run build`.
+  - If `index.html` exists at repo root: framework is `static`, output directory is `.` (root), zero build command needed.
+  - Otherwise: reject with clear actionable error message.
+- **Alternatives Considered**:
+  1. *Require user to configure build command and output directory via API*: Adds cognitive friction for standard modern static sites.
+  2. *Vercel build-output-api / Nixpacks*: Complex dependency footprint not needed for the core static hosting happy path.
+- **Why this one**: Covers the vast majority of modern frontend repositories (Vite, CRA, plain static HTML) with zero configuration while failing fast and descriptively when an unsupported structure is provided.
+- **Trade-offs**: Non-standard output directories or multi-package monorepos without root configs fail detection.
+
+---
+
+## 9. Subprocess Execution Environment Sanitization in Phase 2
+
+- **Decision**: Execute `npm install` and `npm run build` as host child processes, but explicitly sanitize the environment (`process.env` is NEVER inherited). The child process environment contains only `PATH`, `HOME=workDir`, and `CI=true`.
+- **Alternatives Considered**:
+  1. *Inheriting `process.env`*: Exposes database credentials (`DATABASE_URL`), Redis passwords, and MinIO access/secret keys to any npm dependency or postinstall script.
+  2. *Implementing full Docker containers immediately in Phase 2*: Violates the phased progression rules (Phase 2 is the happy path without sandbox; Phase 3 introduces Docker isolation).
+- **Why this one**: Completely shields sensitive infrastructure credentials from untrusted build steps in Phase 2, while confining file modifications to the temporary directory.
+- **Trade-offs**: Phase 2 still runs untrusted code under the host/container OS process table. Phase 3 replaces this with isolated throwaway Docker containers.
+
+---
+
+## 10. Wildcard Subdomain Routing, S3 Streaming, and SPA Fallback
+
+- **Decision**:
+  - Subdomains are validated against RFC 1035 (`^[a-z0-9-]{1,63}$`) and mapped to deployment records.
+  - Deployment records are cached in a short-TTL in-memory LRU cache (10 seconds) to prevent database stampedes on high traffic.
+  - Assets are streamed directly from MinIO using Node readable streams and AWS SDK `getObject`, with explicit MIME type resolution and caching headers (`no-cache` for HTML, 1-year immutable for hashed assets under `/assets/`).
+  - SPA Fallback: If a requested path has no file extension (e.g. `/dashboard`, `/users/42`) and does not exist in storage, fall back to serving `/index.html` with HTTP 200. Assets with file extensions (e.g. `.js`, `.png`) return a genuine HTTP 404 if missing.
+  - Path traversal sequences (`..`, encoded `%2e%2e`, null bytes) are intercepted and rejected early with HTTP 400.
+- **Alternatives Considered**:
+  1. *Path-based routing (`localhost:8080/sites/<id>/`)*: Breaks relative asset paths and SPA history routing for most frontend frameworks.
+  2. *Buffering entire files in memory in the router*: Causes high memory pressure when serving large JS bundles or image assets.
+- **Why this one**: Subdomain routing (`<id>.localhost:8080`) matches production deployment platforms (Vercel/Netlify), streaming provides high throughput with minimal memory footprint, and SPA fallback correctly powers client-side routing.
+- **Trade-offs**: Requires `*.localhost` DNS resolution, which is standard in modern browsers and OS resolvers for loopback interfaces.

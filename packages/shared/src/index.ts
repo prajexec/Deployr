@@ -4,6 +4,8 @@ export * from './state-machine.js';
 export * from './db/index.js';
 export * from './db/schema.js';
 export * from './db/migrate.js';
+export * from './db/deployments.js';
 export * from './storage.js';
 export * from './redis.js';
 export * from './logger.js';
+export * from './validation.js';
