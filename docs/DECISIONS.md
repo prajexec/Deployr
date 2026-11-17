@@ -126,3 +126,119 @@ This document records architectural decisions made throughout the design and imp
   2. *Buffering entire files in memory in the router*: Causes high memory pressure when serving large JS bundles or image assets.
 - **Why this one**: Subdomain routing (`<id>.localhost:8080`) matches production deployment platforms (Vercel/Netlify), streaming provides high throughput with minimal memory footprint, and SPA fallback correctly powers client-side routing.
 - **Trade-offs**: Requires `*.localhost` DNS resolution, which is standard in modern browsers and OS resolvers for loopback interfaces.
+
+---
+
+## 11. Worker-to-Docker Daemon Architecture: Sibling Containers via Docker Socket
+
+- **Decision**: Mount `/var/run/docker.sock` exclusively to the `worker` service container. The worker uses the Docker Engine API (via `dockerode`) to spawn ephemeral sibling containers (`deployservice-build-<id>`) on the host daemon.
+- **Alternatives Considered**:
+  1. *Docker-in-Docker (dind)*: Running a nested Docker daemon inside the worker container.
+     - *Why not*: Requires running the worker container in `--privileged` mode, adding kernel-level capabilities and severely increasing attack surface. DinD also causes storage driver performance issues with nested overlayfs filesystems.
+  2. *Running the worker directly on the host*:
+     - *Why not*: Breaks the `docker compose up` single-command setup requirement and makes cross-platform reproducibility (macOS/Linux) and environment isolation difficult.
+  3. *Docker socket proxy (e.g. `tecnativa/docker-socket-proxy`)*:
+     - *Why not*: Introduces an additional third-party container dependency. While valuable in untrusted multi-tenant orchestrators, the worker container itself is trusted internal code. We can adopt a socket proxy in future hardening if needed.
+- **Why this one**: Mounting the socket to the worker container allows the entire platform to start with `docker compose up` while keeping the worker packaged in a standard container.
+- **Strict Invariants**:
+  - Only the `worker` container receives `/var/run/docker.sock`.
+  - Build containers **NEVER** get the Docker socket mounted under any circumstances.
+  - Sibling container configurations are generated entirely from a hardcoded, immutable template in the worker — **zero** user-supplied arguments, volume mounts, or flags are allowed.
+- **Trade-offs & Security Implications**: Access to `/var/run/docker.sock` is root-equivalent on the host. Therefore, the worker container must NEVER execute untrusted code itself; its sole responsibility is queue management, Docker API communication, and tar artifact extraction.
+
+---
+
+## 12. Storage & Extraction Model: Dedicated Per-Build Disk Volumes
+
+- **Decision**: Use a per-build disk-backed Docker volume (`deployservice-build-<id>`) mounted at `/build`, paired with Docker Engine API archive extraction (`container.getArchive()`).
+- **Spike Findings**: A verification spike confirmed that Docker's `container.getArchive()` **fails** on `tmpfs` mounts with `Could not find the file in container`, because `getArchive` inspects the overlayfs graph driver root filesystem rather than in-memory tmpfs mount points. Conversely, `getArchive` on a named Docker volume succeeds consistently, even when the container has already exited.
+- **Workflow**:
+  1. The worker creates a per-build volume: `deployservice-build-<id>`.
+  2. The build container mounts `deployservice-build-<id>` at `/build` and runs the build script.
+  3. The worker drains stdout/stderr streams with a 2 MB log capture cap (discarding overflow bytes to prevent backpressure deadlocks).
+  4. On successful completion, the worker calls `container.getArchive({ path: '/build/' + outputDir })`.
+  5. The tar stream is validated in-memory (Zip Slip, symlink rejection, resource bounds) and uploaded directly to MinIO.
+  6. The `finally` block removes both the container (`container.remove({ force: true })`) and the named volume (`volume.remove()`).
+- **Alternatives Considered**:
+  1. *Tmpfs mount at `/build`*:
+     - *Why not*: (1) `container.getArchive()` cannot read files inside `tmpfs` mounts. (2) `tmpfs` pages are accounted directly against the container's memory cgroup. Compiling a modern Vite/React app with `node_modules` (150MB - 300MB) inside a 512MB RAM cgroup triggers premature OOM kills.
+  2. *Host bind mount (`-v /tmp/worker-build:/build`)*:
+     - *Why not*: UID/GID mismatches between host and container non-root UID 10001, and potential host filesystem traversal.
+  3. *Executing `tar -cf -` via `docker exec`*:
+     - *Why not*: Requires keeping the container running/paused after build completion and adds complexity compared to native `getArchive` on the stopped container volume.
+- **Why this one**: Disk-backed named volumes solve both the `getArchive` extraction limitation and the memory cgroup exhaustion problem while maintaining complete isolation from the host filesystem.
+
+---
+
+## 13. Build Container Sandboxing and Memory Model
+
+- **Decision**: Every build container runs under strict, immutable resource constraints:
+  - `Memory`: 512 MB hard RAM limit.
+  - `MemorySwap`: 512 MB (swap equals memory, ensuring swap is completely disabled to protect host disk I/O).
+  - `NanoCPUs`: `1_000_000_000` (capped at 1 CPU core).
+  - `PidsLimit`: 100 (containment against fork bombs and process table exhaustion).
+  - `User`: Dedicated unprivileged user (`builduser`, UID `10001:10001`).
+  - `CapDrop: ["ALL"]`: Drops all Linux kernel capabilities.
+  - `SecurityOpt: ["no-new-privileges:true"]`: Forbids privilege escalation via setuid binaries.
+  - `ReadonlyRootfs: true`: Root filesystem is immutable and read-only.
+  - `Tmpfs`: Small in-memory `/tmp` filesystem mounted as `rw,noexec,nosuid,size=64m`.
+  - `Binds`: Only the dedicated per-build volume `deployservice-build-<id>:/build`. Zero host filesystem mounts.
+  - `Environment`:
+    - `HOME=/build/.home` (writable path).
+    - `npm_config_cache=/build/.cache/npm`.
+    - `YARN_CACHE_FOLDER=/build/.cache/yarn`.
+    - `PNPM_HOME=/build/.cache/pnpm`.
+- **Memory Model Justification**: Because `/build` is backed by a disk volume rather than tmpfs, the 512 MB RAM limit is dedicated entirely to Node.js build processes (`node --max-old-space-size=384`). Disk-heavy `node_modules` and static assets do not consume container RAM.
+- **Trade-offs**: Extreme memory bombs (allocating > 512 MB RAM) are cleanly OOM-killed by the Linux kernel cgroup controller, which our worker detects via `container.inspect()` (`state.OOMKilled`).
+
+---
+
+## 14. Network Isolation: Internal Port Decoupling and Dedicated Build Network
+
+- **Decision**:
+  1. **Compose Network Hardening**: In the default `docker-compose.yml`, internal ports for `postgres` (5432), `redis` (6379), and `minio` (9000, 9001) are **NOT published** to the host interface. Development port mappings are relegated strictly to `docker-compose.dev.yml`.
+  2. **Dedicated Build Bridge Network**: Build containers run on an isolated Docker bridge network (`deployservice-build-net`). Internal infrastructure services run on `deployservice-network`.
+  3. **DNS Isolation**: Containers on `deployservice-build-net` cannot resolve `postgres`, `redis`, or `minio` by container name (NXDOMAIN).
+- **Host Gateway & LAN Limitation (Documented in SECURITY.md)**:
+  - Build containers have outbound internet access for `git clone` and `npm install`.
+  - By Docker networking design, containers on bridge networks can route to the Docker host gateway IP (`172.17.0.1` or host IP).
+  - Because internal database and cache ports are no longer published on the host in `docker-compose.yml`, connecting to the host gateway IP on 5432 or 6379 fails (connection refused).
+  - Note: The API port (3000) and Router port (8080) are intentionally published on the host and remain reachable from build containers via the host gateway.
+
+---
+
+## 15. Tar Extraction Security: Zip Slip and Symlink Protection
+
+- **Decision**: Validate the tar stream from `container.getArchive()` in memory entry-by-entry before saving or uploading any file:
+  - **Path Traversal Protection**: Reject any entry whose name contains `..`, starts with `/`, contains null bytes, or resolves outside the intended prefix.
+  - **Type Whitelist**: Allow only regular files (`type === 'file'`) and directories (`type === 'directory'`). Explicitly reject symlinks (`type === 'symlink'`), hard links (`type === 'link'`), device nodes, and FIFOs.
+  - **Resource Bounds**: Reject archives exceeding:
+    - Max total uncompressed size: 100 MB.
+    - Max total file count: 5,000 files.
+    - Max single file size: 25 MB.
+- **Alternatives Considered**:
+  1. *Unpacking tar with `tar -xf` to a temporary directory on disk*:
+     - *Why not*: Standard tar extractors can be tricked into writing through symlinks (writing to arbitrary host paths) or traversing directory boundaries via crafted archives.
+- **Why this one**: In-memory inspection with strict whitelisting prevents Zip Slip, symlink arbitrary writes, and decompression bombs completely.
+
+---
+
+## 16. Container Lifecycle, Wall-Clock Timeout, and Orphan Reaping
+
+- **Decision**:
+  - **Container Tagging**: Every build container is created with standardized metadata labels:
+    - `deployservice.managed=true`
+    - `deployservice.deployment_id=<id>`
+    - `deployservice.created_at=<iso_timestamp>`
+  - **Guaranteed Cleanup**: Containers and named volumes are always stopped and removed (`container.remove({ force: true })`, `volume.remove()`) in a `finally` block in the worker.
+  - **Startup Orphan Reaper**: When the worker boots up, it queries the Docker API for any containers with label `deployservice.managed=true`. Any containers left running from previous worker crashes or restarts are immediately stopped and removed before new queue jobs are processed.
+  - **Wall-Clock Timeout**: Worker enforces an explicit wall-clock timeout (default 5 minutes). If exceeded, the worker forcefully kills the container and records status `timed_out`.
+  - **OOM Detection**: On container exit, the worker inspects `container.inspect()`. If `state.OOMKilled === true` or exit code is 137 with an OOM flag, the deployment is marked `failed` with a descriptive message ("Build exceeded memory limit (OOM killed)").
+
+---
+
+## 17. Repo URL Handling and Log Overflow Draining
+
+- **Decision**:
+  - **Parameter Injection Immunity**: The repository URL is passed strictly as an environment variable (`REPO_URL`) to an immutable entrypoint shell script that invokes `git clone --depth 1 -- "$REPO_URL" /build`. It is NEVER interpolated into `sh -c "..."` shell strings. The entrypoint script also verifies the URL format before invoking git.
+  - **Log Flood Containment**: Container output is captured in memory up to a 2 MB ceiling. Once 2 MB is reached, a truncation warning (`[logs truncated: exceeded 2MB limit]`) is appended, and subsequent chunks are consumed and discarded to prevent stdout pipe backpressure from deadlocking the build container.

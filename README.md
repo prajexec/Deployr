@@ -2,8 +2,8 @@
 
 A self-hosted, zero-cost deployment platform (Vercel/Netlify-style) built from scratch using TypeScript, Fastify, BullMQ, Redis, PostgreSQL, and MinIO (S3-compatible).
 
-> [!WARNING]
-> **SECURITY NOTICE (Phase 2):** Build execution in Phase 2 runs as a host subprocess with a sanitized environment (`HOME` set to tempdir, credentials stripped). However, full container-based sandboxing is introduced in Phase 3. **ONLY DEPLOY TRUSTED REPOSITORIES** until Phase 3 is completed. See [SECURITY.md](SECURITY.md) for details.
+> [!NOTE]
+> **Container Sandboxing (Phase 3):** Untrusted builds execute inside isolated Docker sandbox containers with hard cgroup memory limits (512MB, swap disabled), CPU quotas (1 core), process limits (100 PIDs), dropped capabilities (`CapDrop: ALL`), read-only root filesystems, and dedicated bridge network isolation. See [SECURITY.md](SECURITY.md) for architecture details.
 
 ---
 
