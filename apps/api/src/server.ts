@@ -11,12 +11,15 @@ import {
   getConfig,
   getDeployment,
   getObject,
+  getProject,
   getRedisClient,
   isTerminalStatus,
   isValidDeploymentId,
+  isValidProjectId,
   listDeployments,
   logger,
   Redis,
+  rollbackProjectDeployment,
   updateDeploymentStatus,
   validateRepoUrl,
 } from '@deployservice/shared';
@@ -320,6 +323,54 @@ export function buildServer(): FastifyInstance {
     } catch (err: any) {
       logger.error({ id, err: err.message }, 'Failed to cancel deployment');
       return reply.status(500).send({ error: 'Internal server error' });
+    }
+  });
+
+  // POST /projects/:id/rollback (Requires API Key)
+  fastify.post('/projects/:id/rollback', async (request, reply) => {
+    if (!requireApiKey(request, reply, apiKey)) {
+      return;
+    }
+
+    const { id } = request.params as { id: string };
+
+    if (!isValidProjectId(id)) {
+      return reply.status(400).send({
+        error:
+          "Invalid project ID format. Expected 'prj_' followed by 12 lowercase hex characters.",
+      });
+    }
+
+    const body = (
+      typeof request.body === 'object' && request.body !== null ? request.body : {}
+    ) as { targetDeploymentId?: string };
+
+    const targetDeploymentId = body.targetDeploymentId;
+    if (targetDeploymentId && !isValidDeploymentId(targetDeploymentId)) {
+      return reply.status(400).send({
+        error:
+          "Invalid target deployment ID format. Expected 'd-' followed by 32 lowercase hex characters.",
+      });
+    }
+
+    try {
+      const result = await rollbackProjectDeployment(id, targetDeploymentId);
+      logger.info(
+        { projectId: id, currentDeploymentId: result.deployment.id },
+        'Project deployment rolled back successfully'
+      );
+
+      return reply.status(200).send({
+        success: true,
+        projectId: result.project.id,
+        currentDeploymentId: result.deployment.id,
+        commitSha: result.deployment.commit_sha,
+      });
+    } catch (err: any) {
+      if (err.message?.includes('not found')) {
+        return reply.status(404).send({ error: err.message });
+      }
+      return reply.status(400).send({ error: err.message });
     }
   });
 

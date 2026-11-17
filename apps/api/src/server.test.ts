@@ -378,6 +378,99 @@ describe('API Server', () => {
     });
   });
 
+  describe('POST /projects/:id/rollback', () => {
+    const VALID_PROJECT_ID = 'prj_0123456789ab';
+
+    it('requires API key authentication', async () => {
+      const app = buildServer();
+      const res = await app.inject({
+        method: 'POST',
+        url: `/projects/${VALID_PROJECT_ID}/rollback`,
+      });
+      expect(res.statusCode).toBe(401);
+      await app.close();
+    });
+
+    it('rejects malformed project ID with 400', async () => {
+      const app = buildServer();
+      const res = await app.inject({
+        method: 'POST',
+        url: '/projects/invalid-id/rollback',
+        headers: { 'x-api-key': testApiKey },
+      });
+      expect(res.statusCode).toBe(400);
+      expect(JSON.parse(res.body).error).toMatch(/Invalid project ID format/);
+      await app.close();
+    });
+
+    it('rejects malformed target deployment ID with 400', async () => {
+      const app = buildServer();
+      const res = await app.inject({
+        method: 'POST',
+        url: `/projects/${VALID_PROJECT_ID}/rollback`,
+        headers: { 'x-api-key': testApiKey },
+        payload: { targetDeploymentId: 'd-invalid' },
+      });
+      expect(res.statusCode).toBe(400);
+      expect(JSON.parse(res.body).error).toMatch(/Invalid target deployment ID format/);
+      await app.close();
+    });
+
+    it('returns 404 when project not found', async () => {
+      vi.spyOn(shared, 'rollbackProjectDeployment').mockRejectedValue(
+        new Error(`Project with id '${VALID_PROJECT_ID}' not found`)
+      );
+
+      const app = buildServer();
+      const res = await app.inject({
+        method: 'POST',
+        url: `/projects/${VALID_PROJECT_ID}/rollback`,
+        headers: { 'x-api-key': testApiKey },
+      });
+      expect(res.statusCode).toBe(404);
+      await app.close();
+    });
+
+    it('successfully rolls back project deployment', async () => {
+      vi.spyOn(shared, 'rollbackProjectDeployment').mockResolvedValue({
+        project: {
+          id: VALID_PROJECT_ID,
+          name: 'facebook/react',
+          repo_url: 'https://github.com/facebook/react',
+          current_deployment_id: VALID_ID,
+          created_at: new Date(),
+        },
+        deployment: {
+          id: VALID_ID,
+          project_id: VALID_PROJECT_ID,
+          status: 'deployed',
+          commit_sha: 'commit123',
+          output_dir: 'dist',
+          error_message: null,
+          created_at: new Date(),
+          started_at: new Date(),
+          finished_at: new Date(),
+        },
+      });
+
+      const app = buildServer();
+      const res = await app.inject({
+        method: 'POST',
+        url: `/projects/${VALID_PROJECT_ID}/rollback`,
+        headers: { 'x-api-key': testApiKey },
+        payload: { targetDeploymentId: VALID_ID },
+      });
+
+      expect(res.statusCode).toBe(200);
+      const body = JSON.parse(res.body);
+      expect(body.success).toBe(true);
+      expect(body.projectId).toBe(VALID_PROJECT_ID);
+      expect(body.currentDeploymentId).toBe(VALID_ID);
+      expect(body.commitSha).toBe('commit123');
+      await app.close();
+    });
+  });
+
   describe('GET /deployments/:id/logs (SSE & Historical Logs)', () => {
     it('rejects malformed deployment IDs with 400', async () => {
       const app = buildServer();
