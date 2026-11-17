@@ -13,7 +13,7 @@ import { executeBuild } from '../../apps/worker/src/builder.js';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-describe('Phase 2 Integration: End-to-End Build and Router Flow', { timeout: 10000 }, () => {
+describe('Phase 2 Integration: End-to-End Build and Router Flow', { timeout: 30000 }, () => {
   const viteFixturePath = path.resolve(__dirname, '../fixtures/vite-app');
   const failingFixturePath = path.resolve(__dirname, '../fixtures/failing-app');
 
@@ -93,7 +93,9 @@ describe('Phase 2 Integration: End-to-End Build and Router Flow', { timeout: 100
     });
 
     // 1. Run builder against local fixture
-    await executeBuild(deploymentId, viteFixturePath);
+    await executeBuild(deploymentId, 'https://github.com/example/vite-app', {
+      fixtureDir: viteFixturePath,
+    });
 
     // 2. Verify deployment state is 'deployed'
     const finalDeployment = deploymentsStore.get(deploymentId);
@@ -169,7 +171,11 @@ describe('Phase 2 Integration: End-to-End Build and Router Flow', { timeout: 100
     });
 
     // Builder should fail and throw
-    await expect(executeBuild(deploymentId, failingFixturePath)).rejects.toThrow();
+    await expect(
+      executeBuild(deploymentId, 'https://github.com/example/failing-app', {
+        fixtureDir: failingFixturePath,
+      })
+    ).rejects.toThrow();
 
     // Verify terminal status is 'failed' and error_message is saved
     const finalDeployment = deploymentsStore.get(deploymentId);

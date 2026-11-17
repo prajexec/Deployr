@@ -1,0 +1,8 @@
+{
+  "name": "fixture-log-flood",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "build": "node -e 'for (let i = 0; i < 40000; i++) console.log(\"FLOOD_LOG_LINE_\" + \"X\".repeat(100));' && mkdir -p dist && echo '<h1>Log Flood Finished</h1>' > dist/index.html"
+  }
+}

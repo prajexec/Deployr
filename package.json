@@ -7,7 +7,7 @@
     "build": "pnpm -r --filter=!apps/web build",
     "test": "vitest run --exclude 'test/integration/**'",
     "test:unit": "vitest run --exclude 'test/integration/**'",
-    "test:integration": "vitest run test/integration",
+    "test:integration": "vitest run test/integration --no-file-parallelism",
     "lint": "echo 'Linting skipped'",
     "db:generate": "pnpm --filter @deployservice/shared db:generate",
     "db:migrate": "pnpm --filter @deployservice/shared db:migrate"
