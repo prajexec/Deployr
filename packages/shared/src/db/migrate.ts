@@ -1,13 +1,14 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import type pg from 'pg';
 import { getDbPool } from './index.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-export async function runMigrations(): Promise<void> {
-  const pool = getDbPool();
+export async function runMigrations(customPool?: pg.Pool): Promise<void> {
+  const pool = customPool || getDbPool();
   const client = await pool.connect();
 
   try {
@@ -41,6 +42,8 @@ export async function runMigrations(): Promise<void> {
       .filter((f) => f.endsWith('.sql'))
       .sort();
 
+    // Query applied migrations AFTER obtaining the advisory lock.
+    // If a concurrent runner completed first, its committed records are visible here.
     const { rows: appliedRows } = await client.query<{ name: string }>(
       'SELECT name FROM __schema_migrations'
     );
