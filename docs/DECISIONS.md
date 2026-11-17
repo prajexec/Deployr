@@ -342,68 +342,33 @@ In Phase 4, users watching a deployment need to see live build output in real ti
 
 ---
 
-### 18.5. Redis Blocking-Read Connection Strategy with Limits
+### 18.5. Redis XREAD BLOCK Connection Strategy with In-Memory Fan-Out
+- **Single Source of Truth**: Redis Stream (`logs:<deployment_id>`) is used directly as the single source of truth for both catchup and real-time streaming, eliminating pub/sub dual-write drift and pub/sub reconnect drop gaps.
+- **Dedicated Worker Loop**: A single dedicated Redis connection in the API process continuously runs `XREAD BLOCK 2000 STREAMS <keys...> <ids...>` across all active deployments currently being viewed by at least one client.
+- **In-Memory Fan-Out**: Received entries are dispatched in-memory to registered client callbacks.
+- **Connection Efficiency**: Only 1 single blocking Redis connection across the entire API instance, scaling to hundreds of concurrent client connections without connection pool starvation.
+- **Connection Caps**:
+  - Max 20 concurrent viewers per deployment.
+  - Max 500 global concurrent viewers per API node.
+  - Returns HTTP 429 Too Many Requests when limits are exceeded.
+  - Slow clients whose `reply.raw.writableLength` exceeds 512 KB are forcefully disconnected to protect API heap memory.
 
-#### The Problem with Dedicated Blocking Connections (`XREAD BLOCK`)
-If each SSE connection calls `XREAD BLOCK 5000 STREAMS logs:<id> $`, every open browser tab consumes a dedicated Redis TCP connection. With a typical Node Redis connection pool size of 20–50 connections, 30 concurrent viewers would starve the pool, causing regular API requests (`POST /deployments`, database operations, BullMQ job enqueueing) to hang.
+### 18.6. End-of-Build Archiving and Terminal-State Sequencing
+1. **Worker Finalization**:
+   - Capture buffer in worker memory is finalized independently of Redis stream trimming.
+   - Full log archive uploaded to MinIO at `deployments/<id>/logs.txt`. If MinIO upload fails, deploy still succeeds if build passed, with log warning "archive unavailable".
+   - Database record transitioned to terminal state in Postgres (`assertTransition`).
+   - Terminal end marker written to Redis Stream (`type: marker, name: end, status: <status>`).
+   - 24-hour expiration TTL set on Redis stream key (`EXPIRE logs:<id> 86400`).
+2. **Defensive API Termination**:
+   - API heartbeat (every 15s) queries Postgres for deployment status.
+   - If Postgres is terminal and no stream entries are pending, the API terminates the SSE stream cleanly with `event: end`.
 
-#### The Selected Design: Redis Pub/Sub Broadcast + Streams Catchup (Fan-Out)
-- **Catchup via Pooled Connection**:
-  - When a client connects (or reconnects with `Last-Event-ID`), the API uses a short-lived pooled Redis connection to read existing entries using `XRANGE logs:<id> (<last_event_id> +`.
-  - These backlog events are flushed immediately to the SSE client.
-- **Live Fan-Out via Dedicated Single Pub/Sub Subscriber**:
-  - When the worker produces a log line, it writes to the stream (`XADD logs:<id> ...`) and also publishes a notification to a Redis Pub/Sub channel (`PUBLISH logs:pubsub:<id> <event_json>`).
-  - The API server maintains **a single, dedicated Redis subscriber client** for the entire process.
-  - When SSE clients connect to watch `logs:<id>`, they subscribe to an in-process Node `EventEmitter` keyed by deployment ID.
-  - When the single Redis subscriber receives a message on `logs:pubsub:<id>`, it emits it to all connected SSE clients in memory.
-  - **Connection Complexity**:
-    - Number of Redis connections for live streaming = **1 single subscriber connection** across the entire API instance, regardless of whether 1 or 1,000 clients are watching.
-- **Connection Limits & Protections**:
-  - Rate limiting per IP on `GET /deployments/:id/logs`.
-  - Cap on maximum concurrent SSE connections per IP (e.g., max 5 active streams per client IP) to prevent malicious client connection exhaustion.
-
----
-
-### 18.6. End-of-Build Archiving and Terminal-State Race Conditions
-
-#### The Race Condition
-A client requests logs at the exact instant the worker container completes:
-1. Does the API read from Redis Stream or MinIO?
-2. What happens if the client connects while MinIO upload is in progress?
-3. What happens if the client connects after the build is finished and the Redis stream was trimmed or expired?
-
-#### Guaranteed Resolution Protocol
-1. **Worker Sequencing Order**:
-   - Step 1: Container finishes execution. Full log buffer (capped at 2 MB) is finalized.
-   - Step 2: Worker uploads complete log archive to MinIO at key `deployments/<id>/logs.txt` with `ContentType: text/plain; charset=utf-8`.
-   - Step 3: Worker publishes the final terminal event to Redis Stream and Pub/Sub:
-     `event: end, data: {"status":"deployed","exitCode":0}`.
-   - Step 4: Worker updates deployment state in Postgres to `deployed` (or `failed` / `timed_out`).
-   - Step 5: Worker sets a 24-hour expiration TTL on the Redis key `logs:<id>` (`EXPIRE logs:<id> 86400`).
-2. **API Read Resolution Algorithm**:
-   - Check deployment status in Postgres:
-     - **Case A: Build is active** (`queued`, `cloning`, `building`, `uploading`):
-       - Stream directly from Redis Streams (catchup via `XRANGE`, live updates via Pub/Sub).
-     - **Case B: Build is terminal** (`deployed`, `failed`, `timed_out`, `cancelled`):
-       - Check if Redis stream `logs:<id>` exists (`EXISTS logs:<id>`).
-       - If Redis stream exists (build ended recently): replay all events from Redis with `XRANGE`, emit `event: end`, and close the SSE connection.
-       - If Redis stream has expired: fetch the archived log from MinIO (`deployments/<id>/logs.txt`), stream lines as SSE log events, emit `event: end`, and close.
-       - If client requests with `Accept: text/plain` (e.g., `curl /deployments/:id/logs`): stream or return the raw text directly.
-
----
-
-### 18.7. Log Access, Authorization, and Secret Sanitization
-
-- **Endpoint**:
-  - `GET /deployments/:id/logs`
-  - Supports content negotiation:
-    - `Accept: text/event-stream` -> Live SSE stream.
-    - `Accept: text/plain` or default browser query `?format=raw` -> Full text output.
-- **Input Validation**:
-  - Deployment ID validated strictly against format `^d-[a-zA-Z0-9_-]+$` to prevent cache key pollution or parameter traversal.
-  - Returns `404 Not Found` if the deployment does not exist in Postgres.
-- **Secret Sanitization**:
-  - Untrusted code in public repositories must never see internal system credentials.
-  - *Layer 1 (Sandbox Isolation)*: As implemented in Phase 3, infrastructure credentials (`DATABASE_URL`, `POSTGRES_PASSWORD`, `S3_SECRET_ACCESS_KEY`, `REDIS_URL`) are never injected into build container environments.
-  - *Layer 2 (Worker Scrubbing Filter)*: The worker passes raw stdout/stderr through a pattern scrubber before writing to Redis or MinIO, redacting any occurrences matching known environment secrets (e.g., replacing matches with `[REDACTED]`).
+### 18.7. Security, Auth, and 128-Bit Capability IDs
+- **128-bit Random IDs**: Deployment IDs follow `^d-[a-f0-9]{32}$` everywhere (API and router), providing 128 bits of entropy against ID enumeration.
+- **API Key Authentication**:
+  - `API_KEY` configured in `.env`.
+  - Required for `POST /deployments` and `GET /deployments` (listing).
+  - `GET /deployments/:id` and `/logs` remain unauthenticated capability URLs based on the 128-bit secret ID.
+  - Documented residual risk: any build container reaching the host gateway on port 3000 cannot enumerate deployments without the API key, nor guess 128-bit random deployment IDs.
 
