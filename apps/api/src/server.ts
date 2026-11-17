@@ -7,6 +7,8 @@ import {
   checkStorageHealth,
   createDeployment,
   createOrGetProject,
+  deleteDeployment,
+  deleteDeploymentAssets,
   DeploymentStatus,
   getConfig,
   getDeployment,
@@ -94,7 +96,7 @@ export function buildServer(): FastifyInstance {
       }
       cb(null, false);
     },
-    methods: ['GET', 'POST', 'OPTIONS'],
+    methods: ['GET', 'POST', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization', 'x-api-key', 'Last-Event-ID'],
   });
 
@@ -322,6 +324,65 @@ export function buildServer(): FastifyInstance {
       });
     } catch (err: any) {
       logger.error({ id, err: err.message }, 'Failed to cancel deployment');
+      return reply.status(500).send({ error: 'Internal server error' });
+    }
+  });
+
+  // DELETE /deployments/:id (Requires API Key)
+  fastify.delete('/deployments/:id', async (request, reply) => {
+    if (!requireApiKey(request, reply, apiKey)) {
+      return;
+    }
+
+    const { id } = request.params as { id: string };
+
+    if (!isValidDeploymentId(id)) {
+      return reply.status(400).send({
+        error:
+          "Invalid deployment ID format. Expected 'd-' followed by 32 lowercase hex characters.",
+      });
+    }
+
+    try {
+      const deployment = await getDeployment(id);
+      if (!deployment) {
+        return reply.status(404).send({ error: `Deployment '${id}' not found` });
+      }
+
+      // If active, reject with 409 Conflict (must cancel before deleting)
+      if (!isTerminalStatus(deployment.status as any)) {
+        return reply.status(409).send({
+          error: `Cannot delete active deployment '${id}' (status: ${deployment.status}). Cancel it before deleting.`,
+          status: deployment.status,
+        });
+      }
+
+      // 1. Delete all assets from S3 / MinIO (site assets + logs)
+      try {
+        await deleteDeploymentAssets(id);
+      } catch (s3Err: any) {
+        logger.warn({ id, err: s3Err.message }, 'Failed deleting S3 assets for deployment');
+      }
+
+      // 2. Clean up Redis streams and keys
+      try {
+        const redis = getRedisClient();
+        await redis.del(`logs:${id}`, `deployservice:logs:${id}`);
+      } catch (redisErr: any) {
+        logger.warn({ id, err: redisErr.message }, 'Failed deleting Redis log keys for deployment');
+      }
+
+      // 3. Delete deployment record from Postgres (and update project current_deployment_id if applicable)
+      const deleted = await deleteDeployment(id);
+
+      logger.info({ id }, 'Deployment successfully deleted');
+      return reply.status(200).send({
+        ok: true,
+        id,
+        deleted: Boolean(deleted),
+      });
+    } catch (err: any) {
+      logger.error({ id, err: err.message }, 'Failed to delete deployment');
       return reply.status(500).send({ error: 'Internal server error' });
     }
   });

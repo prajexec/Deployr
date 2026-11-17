@@ -196,3 +196,38 @@ export async function getStuckDeployments(maxAgeMs = 10 * 60 * 1000): Promise<De
     .from(deployments)
     .where(and(statusCondition, lt(deployments.created_at, cutoff)));
 }
+
+export async function deleteDeployment(id: string): Promise<DeploymentRecord | null> {
+  const db = getDb();
+  const existing = await getDeployment(id);
+  if (!existing) {
+    return null;
+  }
+
+  // If the project is currently pointing to this deployment, point to the next eligible or clear it
+  const project = await getProject(existing.project_id);
+  if (project && project.current_deployment_id === id) {
+    const previousDeploys = await db
+      .select()
+      .from(deployments)
+      .where(
+        and(
+          eq(deployments.project_id, existing.project_id),
+          eq(deployments.status, DeploymentStatus.DEPLOYED),
+          ne(deployments.id, id)
+        )
+      )
+      .orderBy(desc(deployments.finished_at), desc(deployments.created_at))
+      .limit(1);
+
+    await db
+      .update(projects)
+      .set({
+        current_deployment_id: previousDeploys.length > 0 ? previousDeploys[0].id : null,
+      })
+      .where(eq(projects.id, existing.project_id));
+  }
+
+  const [deleted] = await db.delete(deployments).where(eq(deployments.id, id)).returning();
+  return deleted || null;
+}

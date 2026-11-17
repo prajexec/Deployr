@@ -210,6 +210,44 @@ export function App() {
     }
   };
 
+  // Delete deployment
+  const handleDelete = async (id: string) => {
+    if (!apiKey.trim()) {
+      setErrorMsg('API key required to delete deployments.');
+      return;
+    }
+
+    if (
+      !window.confirm(
+        `Are you sure you want to permanently delete deployment ${id}? This will remove its files, build logs, and preview URL.`
+      )
+    ) {
+      return;
+    }
+
+    setActionLoading(true);
+    setErrorMsg('');
+    try {
+      const res = await fetch(`http://localhost:3000/deployments/${id}`, {
+        method: 'DELETE',
+        headers: { 'x-api-key': apiKey },
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || 'Failed to delete deployment');
+      }
+      setSuccessMsg(`Deployment ${id} successfully deleted.`);
+      if (selectedId === id) {
+        setSelectedId(null);
+      }
+      await fetchDeployments();
+    } catch (err: any) {
+      setErrorMsg(err.message);
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
   // Rollback project to target deployment
   const handleRollback = async (projectId: string, targetDeploymentId: string) => {
     if (!apiKey.trim()) {
@@ -405,6 +443,19 @@ export function App() {
                     {actionLoading ? 'Rolling back...' : 'Rollback Release To Here'}
                   </button>
                 )}
+
+                {selectedDeployment &&
+                  ['deployed', 'failed', 'cancelled', 'timed_out'].includes(
+                    selectedDeployment.status
+                  ) && (
+                    <button
+                      onClick={() => handleDelete(selectedDeployment.id)}
+                      disabled={actionLoading}
+                      className="bg-red-950 hover:bg-red-900 border border-red-800 disabled:opacity-50 text-red-300 text-xs font-semibold px-3 py-1.5 rounded-lg transition"
+                    >
+                      {actionLoading ? 'Deleting...' : 'Delete Deployment'}
+                    </button>
+                  )}
               </div>
             </div>
 
@@ -673,6 +724,16 @@ export function App() {
                               >
                                 Logs
                               </button>
+                              {['deployed', 'failed', 'cancelled', 'timed_out'].includes(
+                                d.status
+                              ) && (
+                                <button
+                                  onClick={() => handleDelete(d.id)}
+                                  className="text-[11px] bg-red-950/60 hover:bg-red-900 text-red-400 border border-red-900/50 hover:border-red-700 px-2 py-1 rounded transition"
+                                >
+                                  Delete
+                                </button>
+                              )}
                             </div>
                           </td>
                         </tr>

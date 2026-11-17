@@ -385,6 +385,107 @@ describe('API Server', () => {
     });
   });
 
+  describe('DELETE /deployments/:id', () => {
+    it('requires API key authentication', async () => {
+      const app = buildServer();
+      const res = await app.inject({
+        method: 'DELETE',
+        url: `/deployments/${VALID_ID}`,
+      });
+      expect(res.statusCode).toBe(401);
+      await app.close();
+    });
+
+    it('rejects malformed deployment ID with 400', async () => {
+      const app = buildServer();
+      const res = await app.inject({
+        method: 'DELETE',
+        url: '/deployments/d-invalid/delete',
+        headers: { 'x-api-key': testApiKey },
+      });
+      expect(res.statusCode).toBe(404); // Route mismatch
+      const res2 = await app.inject({
+        method: 'DELETE',
+        url: '/deployments/d-invalid',
+        headers: { 'x-api-key': testApiKey },
+      });
+      expect(res2.statusCode).toBe(400);
+      expect(JSON.parse(res2.body).error).toMatch(/Invalid deployment ID format/);
+      await app.close();
+    });
+
+    it('returns 404 if deployment is not found', async () => {
+      vi.spyOn(shared, 'getDeployment').mockResolvedValue(null);
+      const app = buildServer();
+      const res = await app.inject({
+        method: 'DELETE',
+        url: `/deployments/${VALID_ID}`,
+        headers: { 'x-api-key': testApiKey },
+      });
+      expect(res.statusCode).toBe(404);
+      await app.close();
+    });
+
+    it('rejects deleting an active deployment with 409 Conflict', async () => {
+      vi.spyOn(shared, 'getDeployment').mockResolvedValue({
+        id: VALID_ID,
+        project_id: 'prj_test',
+        status: 'building',
+      } as any);
+
+      const app = buildServer();
+      const res = await app.inject({
+        method: 'DELETE',
+        url: `/deployments/${VALID_ID}`,
+        headers: { 'x-api-key': testApiKey },
+      });
+      expect(res.statusCode).toBe(409);
+      expect(JSON.parse(res.body).error).toMatch(/Cannot delete active deployment/);
+      await app.close();
+    });
+
+    it('successfully deletes terminal deployment, cleans up S3 assets, Redis streams, and database record', async () => {
+      vi.spyOn(shared, 'getDeployment').mockResolvedValue({
+        id: VALID_ID,
+        project_id: 'prj_test',
+        status: 'deployed',
+      } as any);
+
+      const deleteAssetsSpy = vi
+        .spyOn(shared, 'deleteDeploymentAssets')
+        .mockResolvedValue(undefined);
+      const mockRedis = {
+        del: vi.fn().mockResolvedValue(2),
+      };
+      vi.spyOn(shared, 'getRedisClient').mockReturnValue(mockRedis as any);
+      const deleteRecordSpy = vi.spyOn(shared, 'deleteDeployment').mockResolvedValue({
+        id: VALID_ID,
+        project_id: 'prj_test',
+        status: 'deployed',
+      } as any);
+
+      const app = buildServer();
+      const res = await app.inject({
+        method: 'DELETE',
+        url: `/deployments/${VALID_ID}`,
+        headers: { 'x-api-key': testApiKey },
+      });
+
+      expect(res.statusCode).toBe(200);
+      const body = JSON.parse(res.body);
+      expect(body.ok).toBe(true);
+      expect(body.id).toBe(VALID_ID);
+      expect(body.deleted).toBe(true);
+      expect(deleteAssetsSpy).toHaveBeenCalledWith(VALID_ID);
+      expect(mockRedis.del).toHaveBeenCalledWith(
+        `logs:${VALID_ID}`,
+        `deployservice:logs:${VALID_ID}`
+      );
+      expect(deleteRecordSpy).toHaveBeenCalledWith(VALID_ID);
+      await app.close();
+    });
+  });
+
   describe('POST /projects/:id/rollback', () => {
     const VALID_PROJECT_ID = 'prj_0123456789ab';
 

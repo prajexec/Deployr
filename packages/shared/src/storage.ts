@@ -1,5 +1,6 @@
 import {
   CreateBucketCommand,
+  DeleteObjectsCommand,
   GetObjectCommand,
   HeadBucketCommand,
   ListObjectsV2Command,
@@ -99,4 +100,38 @@ export async function getObject(key: string, bucketName?: string) {
       Key: key,
     })
   );
+}
+
+export async function deleteDeploymentAssets(
+  deploymentId: string,
+  bucketName?: string
+): Promise<void> {
+  const config = getConfig();
+  const bucket = bucketName || config.S3_BUCKET;
+  const s3 = getS3Client();
+
+  const prefix = `deployments/${deploymentId}/`;
+  let continuationToken: string | undefined = undefined;
+
+  do {
+    const listRes: any = await s3.send(
+      new ListObjectsV2Command({
+        Bucket: bucket,
+        Prefix: prefix,
+        ContinuationToken: continuationToken,
+      })
+    );
+
+    if (listRes.Contents && listRes.Contents.length > 0) {
+      const objectsToDelete = listRes.Contents.map((obj: any) => ({ Key: obj.Key }));
+      await s3.send(
+        new DeleteObjectsCommand({
+          Bucket: bucket,
+          Delete: { Objects: objectsToDelete },
+        })
+      );
+    }
+
+    continuationToken = listRes.NextContinuationToken;
+  } while (continuationToken);
 }
