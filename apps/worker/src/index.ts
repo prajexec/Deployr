@@ -12,9 +12,12 @@ let worker: Worker | null = null;
 async function bootstrap() {
   // 1. Clean up orphaned containers/volumes from previous crashes
   try {
-    const reapedCount = await reapOrphanedContainers();
-    if (reapedCount > 0) {
-      logger.info({ reapedCount }, 'Reaped orphaned build containers on startup');
+    const { containersReaped, volumesReaped } = await reapOrphanedContainers();
+    if (containersReaped > 0 || volumesReaped > 0) {
+      logger.info(
+        { containersReaped, volumesReaped },
+        'Reaped orphaned build resources on startup'
+      );
     }
   } catch (err: any) {
     logger.warn({ err: err.message }, 'Failed during startup orphan container reaping');

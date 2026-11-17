@@ -228,8 +228,9 @@ describe(
     });
 
     it('startup reaper successfully clears orphaned containers and volumes', async () => {
-      const count = await reapOrphanedContainers();
-      expect(typeof count).toBe('number');
+      const result = await reapOrphanedContainers();
+      expect(typeof result.containersReaped).toBe('number');
+      expect(typeof result.volumesReaped).toBe('number');
     });
   }
 );

@@ -231,7 +231,10 @@ This document records architectural decisions made throughout the design and imp
     - `deployservice.deployment_id=<id>`
     - `deployservice.created_at=<iso_timestamp>`
   - **Guaranteed Cleanup**: Containers and named volumes are always stopped and removed (`container.remove({ force: true })`, `volume.remove()`) in a `finally` block in the worker.
-  - **Startup Orphan Reaper**: When the worker boots up, it queries the Docker API for any containers with label `deployservice.managed=true`. Any containers left running from previous worker crashes or restarts are immediately stopped and removed before new queue jobs are processed.
+  - **Startup Orphan Reaper**: When the worker boots up, it queries the Docker API for any containers and volumes labeled with `deployservice.managed=true`:
+    - **Single-Worker vs Multi-Worker Scoping**: In the single-worker architecture running locally via Docker Compose, any orphaned resource on reboot was left by a crashed instance. To support concurrent worker deployments safely, the reaper protects active resources: running containers and volumes are only reaped if they are older than the build timeout (`BUILD_TIMEOUT_MS`, 5 minutes) or already stopped/exited, and never if they belong to the current worker's in-memory `activeDeployments` set.
+    - **Separate Resource Accounting**: Tracks and logs distinct counts for both `containersReaped` and `volumesReaped`.
+    - **Explicit Cleanup Warnings**: Failed cleanup operations during finally or reaping log detailed warnings (`logger.warn`) with resource IDs instead of being swallowed silently.
   - **Wall-Clock Timeout**: Worker enforces an explicit wall-clock timeout (default 5 minutes). If exceeded, the worker forcefully kills the container and records status `timed_out`.
   - **OOM Detection**: On container exit, the worker inspects `container.inspect()`. If `state.OOMKilled === true` or exit code is 137 with an OOM flag, the deployment is marked `failed` with a descriptive message ("Build exceeded memory limit (OOM killed)").
 
