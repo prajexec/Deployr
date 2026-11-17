@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   DeploymentRecord,
   DeploymentStatus,
+  generateDeploymentId,
   getDeployment,
   updateDeploymentStatus,
   validateRepoUrl,
@@ -99,7 +100,7 @@ describe(
     }
 
     it('memory bomb: container is killed by cgroup OOM killer, deployment marked failed with memory message', async () => {
-      const id = 'd-test-membomb';
+      const id = generateDeploymentId();
       seedDeployment(id);
 
       await expect(
@@ -115,7 +116,7 @@ describe(
     });
 
     it('infinite loop / sleep: killed at wall-clock timeout and marked timed_out', async () => {
-      const id = 'd-test-infloop';
+      const id = generateDeploymentId();
       seedDeployment(id);
 
       // Run with 2-second timeout to verify quick kill
@@ -132,7 +133,7 @@ describe(
     });
 
     it('fork bomb: contained by pids limit (100), host unaffected, marks deployment failed', async () => {
-      const id = 'd-test-forkbomb';
+      const id = generateDeploymentId();
       seedDeployment(id);
 
       await expect(
@@ -147,7 +148,7 @@ describe(
     });
 
     it('log flood: output is truncated at 2MB without hanging stdout or exhausting memory, build completes', async () => {
-      const id = 'd-test-logflood';
+      const id = generateDeploymentId();
       seedDeployment(id);
 
       await executeBuild(id, 'https://github.com/example/log-flood', {
@@ -162,12 +163,13 @@ describe(
     });
 
     it('hostile postinstall: asserts credentials, socket, rootfs, and internal network are strictly defended', async () => {
-      const id = 'd-test-hostile-audit';
+      const id = generateDeploymentId();
       seedDeployment(id);
 
       await executeBuild(id, 'https://github.com/example/hostile-postinstall', {
         fixtureDir: hostilePostinstallDir,
         timeoutMs: 15000,
+        enableHostInternalForTest: true,
       });
 
       const record = deploymentsStore.get(id);
@@ -205,7 +207,7 @@ describe(
     });
 
     it('realistic mid-size Vite/React app: compiles cleanly within 512MB RAM and serves via router', async () => {
-      const id = 'd-test-midsize';
+      const id = generateDeploymentId();
       seedDeployment(id);
 
       await executeBuild(id, 'https://github.com/example/midsize-vite-app', {
@@ -274,7 +276,7 @@ describe(
 
       for (let i = 0; i < hostilePayloads.length; i++) {
         const payload = hostilePayloads[i];
-        const id = `d-hostile-${Date.now()}-${i}`;
+        const id = generateDeploymentId();
         seedDeployment(id);
 
         let thrownErr: any = null;

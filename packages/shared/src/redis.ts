@@ -1,6 +1,9 @@
 import { Redis } from 'ioredis';
 import { getConfig } from './config.js';
 
+export { Redis };
+export type RedisClient = Redis;
+
 let redisInstance: Redis | null = null;
 
 export function getRedisClient(): Redis {

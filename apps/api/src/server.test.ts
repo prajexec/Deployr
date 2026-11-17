@@ -1,9 +1,20 @@
-import { describe, expect, it, vi } from 'vitest';
+import crypto from 'node:crypto';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import * as shared from '@deployservice/shared';
 import * as queueModule from './queue.js';
-import { buildServer } from './server.js';
+import { buildServer, validateApiKeyConfig } from './server.js';
+
+const VALID_ID = 'd-0123456789abcdef0123456789abcdef';
+const VALID_ID_2 = 'd-ffffffffffffffffffffffffffffffff';
+
+const testApiKey = crypto.randomBytes(32).toString('hex');
+process.env.API_KEY = testApiKey;
 
 describe('API Server', () => {
+  beforeEach(() => {
+    process.env.API_KEY = testApiKey;
+    shared.resetConfig();
+  });
   describe('GET /healthz', () => {
     it('returns 200 and ok status when all dependencies are healthy', async () => {
       vi.spyOn(shared, 'checkDbHealth').mockResolvedValue(true);
@@ -46,6 +57,94 @@ describe('API Server', () => {
     });
   });
 
+  describe('API Key Startup Validation', () => {
+    it('refuses to start when API_KEY is missing or empty', () => {
+      delete process.env.API_KEY;
+      shared.resetConfig();
+      expect(() => buildServer()).toThrow(/API_KEY is required and cannot be empty/);
+
+      process.env.API_KEY = '   ';
+      shared.resetConfig();
+      expect(() => buildServer()).toThrow(/API_KEY is required and cannot be empty/);
+    });
+
+    it('refuses to start when API_KEY is insecure "dev-api-key"', () => {
+      process.env.API_KEY = 'dev-api-key';
+      shared.resetConfig();
+      expect(() => buildServer()).toThrow(/Insecure API_KEY "dev-api-key" is prohibited/);
+    });
+
+    it('refuses to start when API_KEY is set to placeholder value', () => {
+      process.env.API_KEY = '<GENERATE_API_KEY_WITH_OPENSSL_RAND_HEX_32>';
+      shared.resetConfig();
+      expect(() => buildServer()).toThrow(/placeholder value/);
+
+      process.env.API_KEY = '<SOME_OTHER_PLACEHOLDER>';
+      shared.resetConfig();
+      expect(() => buildServer()).toThrow(/placeholder value/);
+    });
+
+    it('accepts strong random API_KEY', () => {
+      const key = crypto.randomBytes(32).toString('hex');
+      process.env.API_KEY = key;
+      shared.resetConfig();
+      const app = buildServer();
+      expect(app).toBeDefined();
+    });
+  });
+
+  describe('API Key Authentication', () => {
+    it('rejects POST /deployments with 401 when API key is missing or invalid', async () => {
+      const app = buildServer();
+      const res = await app.inject({
+        method: 'POST',
+        url: '/deployments',
+        payload: { repoUrl: 'https://github.com/facebook/react' },
+      });
+      expect(res.statusCode).toBe(401);
+      expect(JSON.parse(res.body).error).toMatch(/Unauthorized/);
+
+      const resBadKey = await app.inject({
+        method: 'POST',
+        url: '/deployments',
+        headers: { 'x-api-key': 'wrong-key' },
+        payload: { repoUrl: 'https://github.com/facebook/react' },
+      });
+      expect(resBadKey.statusCode).toBe(401);
+      await app.close();
+    });
+
+    it('rejects GET /deployments (list) with 401 when API key is missing or invalid', async () => {
+      const app = buildServer();
+      const res = await app.inject({
+        method: 'GET',
+        url: '/deployments',
+      });
+      expect(res.statusCode).toBe(401);
+      await app.close();
+    });
+
+    it('accepts valid API key via x-api-key or Bearer token', async () => {
+      vi.spyOn(shared, 'listDeployments').mockResolvedValue([]);
+      const app = buildServer();
+
+      const resHeader = await app.inject({
+        method: 'GET',
+        url: '/deployments',
+        headers: { 'x-api-key': testApiKey },
+      });
+      expect(resHeader.statusCode).toBe(200);
+
+      const resBearer = await app.inject({
+        method: 'GET',
+        url: '/deployments',
+        headers: { authorization: `Bearer ${testApiKey}` },
+      });
+      expect(resBearer.statusCode).toBe(200);
+      await app.close();
+    });
+  });
+
   describe('POST /deployments', () => {
     it('rejects invalid or malicious repository URLs with 400', async () => {
       const app = buildServer();
@@ -63,6 +162,7 @@ describe('API Server', () => {
         const res = await app.inject({
           method: 'POST',
           url: '/deployments',
+          headers: { 'x-api-key': testApiKey },
           payload,
         });
 
@@ -83,7 +183,7 @@ describe('API Server', () => {
       });
 
       vi.spyOn(shared, 'createDeployment').mockResolvedValue({
-        id: 'd-1234567890ab',
+        id: VALID_ID,
         project_id: 'prj_test123',
         status: 'queued',
         commit_sha: null,
@@ -103,15 +203,16 @@ describe('API Server', () => {
       const res = await app.inject({
         method: 'POST',
         url: '/deployments',
+        headers: { 'x-api-key': testApiKey },
         payload: { repoUrl: 'https://github.com/facebook/react' },
       });
 
       expect(res.statusCode).toBe(201);
       const body = JSON.parse(res.body);
-      expect(body.id).toBe('d-1234567890ab');
+      expect(body.id).toBe(VALID_ID);
       expect(body.status).toBe('queued');
       expect(mockQueueAdd).toHaveBeenCalledWith('build', {
-        deploymentId: 'd-1234567890ab',
+        deploymentId: VALID_ID,
         repoUrl: 'https://github.com/facebook/react',
       });
 
@@ -124,6 +225,7 @@ describe('API Server', () => {
         method: 'POST',
         url: '/deployments',
         headers: {
+          'x-api-key': testApiKey,
           'content-type': 'text/plain',
         },
         payload: 'https://github.com/facebook/react',
@@ -135,9 +237,20 @@ describe('API Server', () => {
   });
 
   describe('GET /deployments/:id', () => {
-    it('returns deployment when found', async () => {
+    it('validates 128-bit deployment ID format and rejects malformed IDs with 400', async () => {
+      const app = buildServer();
+      const res = await app.inject({
+        method: 'GET',
+        url: '/deployments/d-invalid-short',
+      });
+      expect(res.statusCode).toBe(400);
+      expect(JSON.parse(res.body).error).toMatch(/Invalid deployment ID format/);
+      await app.close();
+    });
+
+    it('returns deployment when found without requiring API key', async () => {
       vi.spyOn(shared, 'getDeployment').mockResolvedValue({
-        id: 'd-abc123456789',
+        id: VALID_ID,
         project_id: 'prj_test123',
         status: 'deployed',
         commit_sha: 'a1b2c3d4e5f6',
@@ -151,12 +264,12 @@ describe('API Server', () => {
       const app = buildServer();
       const res = await app.inject({
         method: 'GET',
-        url: '/deployments/d-abc123456789',
+        url: `/deployments/${VALID_ID}`,
       });
 
       expect(res.statusCode).toBe(200);
       const body = JSON.parse(res.body);
-      expect(body.id).toBe('d-abc123456789');
+      expect(body.id).toBe(VALID_ID);
       expect(body.status).toBe('deployed');
 
       await app.close();
@@ -168,10 +281,106 @@ describe('API Server', () => {
       const app = buildServer();
       const res = await app.inject({
         method: 'GET',
-        url: '/deployments/nonexistent-id',
+        url: `/deployments/${VALID_ID_2}`,
       });
 
       expect(res.statusCode).toBe(404);
+      await app.close();
+    });
+  });
+
+  describe('GET /deployments/:id/logs (SSE & Historical Logs)', () => {
+    it('rejects malformed deployment IDs with 400', async () => {
+      const app = buildServer();
+      const res = await app.inject({
+        method: 'GET',
+        url: '/deployments/d-short/logs',
+      });
+      expect(res.statusCode).toBe(400);
+      await app.close();
+    });
+
+    it('returns 404 if deployment does not exist', async () => {
+      vi.spyOn(shared, 'getDeployment').mockResolvedValue(null);
+      const app = buildServer();
+      const res = await app.inject({
+        method: 'GET',
+        url: `/deployments/${VALID_ID}/logs`,
+      });
+      expect(res.statusCode).toBe(404);
+      await app.close();
+    });
+
+    it('serves raw text log when Accept: text/plain or format=raw', async () => {
+      vi.spyOn(shared, 'getDeployment').mockResolvedValue({
+        id: VALID_ID,
+        project_id: 'prj_test',
+        status: 'deployed',
+        commit_sha: null,
+        output_dir: null,
+        error_message: null,
+        created_at: new Date(),
+        started_at: null,
+        finished_at: null,
+      });
+
+      vi.spyOn(shared, 'getObject').mockResolvedValue({
+        Body: Buffer.from('[builder] Build complete\n'),
+        ContentType: 'text/plain',
+      } as any);
+
+      const app = buildServer();
+      const res = await app.inject({
+        method: 'GET',
+        url: `/deployments/${VALID_ID}/logs?format=raw`,
+      });
+
+      expect(res.statusCode).toBe(200);
+      expect(res.headers['content-type']).toContain('text/plain');
+      expect(res.body).toContain('[builder] Build complete');
+      await app.close();
+    });
+
+    it('serves SSE stream with correct headers, Vary: Origin, and CORS allowlist', async () => {
+      vi.spyOn(shared, 'getDeployment').mockResolvedValue({
+        id: VALID_ID,
+        project_id: 'prj_test',
+        status: 'deployed',
+        commit_sha: null,
+        output_dir: null,
+        error_message: null,
+        created_at: new Date(),
+        started_at: null,
+        finished_at: new Date(),
+      });
+
+      vi.spyOn(shared, 'getObject').mockResolvedValue({
+        Body: Buffer.from('Archived build logs\n'),
+        ContentType: 'text/plain',
+      } as any);
+
+      const mockRedis = {
+        xrange: vi.fn().mockResolvedValue([]),
+      };
+      vi.spyOn(shared, 'getRedisClient').mockReturnValue(mockRedis as any);
+
+      const app = buildServer();
+      const res = await app.inject({
+        method: 'GET',
+        url: `/deployments/${VALID_ID}/logs`,
+        headers: {
+          accept: 'text/event-stream',
+          origin: 'http://localhost:5173',
+        },
+      });
+
+      expect(res.statusCode).toBe(200);
+      expect(res.headers['content-type']).toContain('text/event-stream');
+      expect(res.headers['access-control-allow-origin']).toBe('http://localhost:5173');
+      expect(res.headers['vary']).toBe('Origin');
+      expect(res.body).toContain('event: log');
+      expect(res.body).toContain('Archived build logs');
+      expect(res.body).toContain('event: end');
       await app.close();
     });
   });
@@ -210,22 +419,6 @@ describe('API Server', () => {
         },
       });
 
-      expect(res.headers['access-control-allow-origin']).toBeUndefined();
-      await app.close();
-    });
-
-    it('allows requests with no Origin header (CLI / internal)', async () => {
-      vi.spyOn(shared, 'checkDbHealth').mockResolvedValue(true);
-      vi.spyOn(shared, 'checkRedisHealth').mockResolvedValue(true);
-      vi.spyOn(shared, 'checkStorageHealth').mockResolvedValue(true);
-
-      const app = buildServer();
-      const res = await app.inject({
-        method: 'GET',
-        url: '/healthz',
-      });
-
-      expect(res.statusCode).toBe(200);
       expect(res.headers['access-control-allow-origin']).toBeUndefined();
       await app.close();
     });

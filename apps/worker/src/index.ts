@@ -1,6 +1,7 @@
 import { Worker } from 'bullmq';
 import { getConfig, getRedisClient, logger } from '@deployservice/shared';
-import { ensureBuildNetwork, executeBuild, reapOrphanedContainers } from './builder.js';
+import { ensureBuildNetwork, reapOrphanedContainers } from './builder.js';
+import { processDeploymentJob } from './processor.js';
 
 const config = getConfig();
 const redis = getRedisClient();
@@ -35,13 +36,7 @@ async function bootstrap() {
   worker = new Worker(
     'deployments',
     async (job) => {
-      const { deploymentId, repoUrl } = job.data as {
-        deploymentId: string;
-        repoUrl: string;
-      };
-
-      logger.info({ deploymentId, repoUrl, jobId: job.id }, 'Worker received build job');
-      await executeBuild(deploymentId, repoUrl);
+      await processDeploymentJob(job.data);
     },
     {
       connection: redis,

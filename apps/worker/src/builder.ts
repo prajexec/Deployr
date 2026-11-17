@@ -6,11 +6,13 @@ import tar from 'tar-stream';
 import {
   DeploymentStatus,
   getConfig,
+  getRedisClient,
   logger,
   updateDeploymentStatus,
   uploadObject,
 } from '@deployservice/shared';
 import { validateAndExtractTar } from './tar-extractor.js';
+import { DeploymentLogWriter } from './stream-writer.js';
 
 const MIME_MAP: Record<string, string> = {
   '.html': 'text/html; charset=utf-8',
@@ -251,6 +253,7 @@ export interface BuildOptions {
   timeoutMs?: number;
   dockerClient?: Docker;
   maxLogBytes?: number;
+  enableHostInternalForTest?: boolean;
 }
 
 /**
@@ -273,8 +276,11 @@ export async function executeBuild(
 
   let container: Docker.Container | null = null;
   let volume: Docker.Volume | null = null;
+  let logWriter: DeploymentLogWriter | null = null;
   let timeoutTimer: NodeJS.Timeout | null = null;
   let isTimedOut = false;
+  let waitResult: { StatusCode: number } = { StatusCode: 1 };
+  let logBuffer = '';
 
   logger.info({ deploymentId, repoUrl }, 'Starting isolated container build...');
 
@@ -323,7 +329,9 @@ export async function executeBuild(
 
         // Network isolation: dedicated bridge network separate from compose network
         NetworkMode: 'deployservice-build-net',
-        ExtraHosts: ['host.docker.internal:host-gateway'],
+        ...(options.enableHostInternalForTest
+          ? { ExtraHosts: ['host.docker.internal:host-gateway'] }
+          : {}),
 
         // Storage: dedicated per-build volume for /build and small tmpfs for /tmp
         Binds: [`${volumeName}:/build`],
@@ -341,45 +349,67 @@ export async function executeBuild(
       await container.putArchive(fixtureTar, { path: '/build' });
     }
 
-    // 4. Attach to stdout/stderr with 2 MB cap and non-blocking draining
+    // 4. Attach to stdout/stderr with 2 MB cap, real-time Redis streaming, and non-blocking draining
     const logStream = await container.attach({
       stream: true,
       stdout: true,
       stderr: true,
     });
 
-    let logBuffer = '';
+    const secretsToRedact = [
+      process.env.POSTGRES_PASSWORD,
+      process.env.S3_SECRET_ACCESS_KEY,
+      process.env.API_KEY,
+    ].filter(Boolean) as string[];
+
+    logWriter = new DeploymentLogWriter(deploymentId, getRedisClient(), secretsToRedact);
+    await logWriter.start();
+
     let logBytesCaptured = 0;
     let logTruncated = false;
     let transitionedToBuilding = false;
 
-    const logDrainer = new Writable({
+    const captureChunk = (stream: 'stdout' | 'stderr', chunk: Buffer) => {
+      const text = chunk.toString('utf-8');
+
+      // Check if build phase has started
+      if (!transitionedToBuilding && text.includes('[builder] Detected framework:')) {
+        transitionedToBuilding = true;
+        updateDeploymentStatus(deploymentId, DeploymentStatus.BUILDING).catch(() => {});
+      }
+
+      logWriter?.writeChunk(stream, text);
+
+      if (logBytesCaptured < maxLogBytes) {
+        const remaining = maxLogBytes - logBytesCaptured;
+        if (chunk.length <= remaining) {
+          logBuffer += text;
+          logBytesCaptured += chunk.length;
+        } else {
+          logBuffer += text.slice(0, remaining);
+          logBytesCaptured += remaining;
+          logBuffer += '\n[logs truncated: exceeded 2MB limit]\n';
+          logTruncated = true;
+          logWriter?.writeSystemNotice('\n[logs truncated: exceeded 2MB limit]\n');
+        }
+      }
+    };
+
+    const stdoutDrainer = new Writable({
       write(chunk: Buffer, _encoding, callback) {
-        const text = chunk.toString('utf-8');
-
-        // Check if build phase has started
-        if (!transitionedToBuilding && text.includes('[builder] Detected framework:')) {
-          transitionedToBuilding = true;
-          updateDeploymentStatus(deploymentId, DeploymentStatus.BUILDING).catch(() => {});
-        }
-
-        if (logBytesCaptured < maxLogBytes) {
-          const remaining = maxLogBytes - logBytesCaptured;
-          if (chunk.length <= remaining) {
-            logBuffer += text;
-            logBytesCaptured += chunk.length;
-          } else {
-            logBuffer += text.slice(0, remaining);
-            logBytesCaptured += remaining;
-            logBuffer += '\n[logs truncated: exceeded 2MB limit]\n';
-            logTruncated = true;
-          }
-        }
+        captureChunk('stdout', chunk);
         callback();
       },
     });
 
-    docker.modem.demuxStream(logStream, logDrainer, logDrainer);
+    const stderrDrainer = new Writable({
+      write(chunk: Buffer, _encoding, callback) {
+        captureChunk('stderr', chunk);
+        callback();
+      },
+    });
+
+    docker.modem.demuxStream(logStream, stdoutDrainer, stderrDrainer);
 
     // 5. Start container
     await container.start();
@@ -399,7 +429,7 @@ export async function executeBuild(
     }, timeoutMs);
 
     // 7. Wait for container to finish execution
-    const waitResult = await container.wait();
+    waitResult = await container.wait();
     if (timeoutTimer) {
       clearTimeout(timeoutTimer);
       timeoutTimer = null;
@@ -479,12 +509,29 @@ export async function executeBuild(
       await uploadObject(s3Key, file.content, contentType);
     }
 
-    // 13. Atomic transition: uploading -> deployed
+    // 13. Upload complete log archive to MinIO at deployments/<id>/logs.txt
+    try {
+      await uploadObject(
+        `deployments/${deploymentId}/logs.txt`,
+        logBuffer,
+        'text/plain; charset=utf-8'
+      );
+    } catch (archiveErr: any) {
+      logger.warn(
+        { deploymentId, err: archiveErr.message },
+        'Failed uploading log archive to storage (archive unavailable)'
+      );
+    }
+
+    // 14. Atomic transition: uploading -> deployed
     await updateDeploymentStatus(deploymentId, DeploymentStatus.DEPLOYED, {
       finished_at: new Date(),
       commit_sha: commitSha,
       output_dir: outputDir,
     });
+
+    // 15. Write terminal end marker to Redis stream
+    await logWriter?.finish('deployed', waitResult.StatusCode);
 
     logger.info(
       { deploymentId, commitSha, fileCount: extractedFiles.length },
@@ -495,6 +542,17 @@ export async function executeBuild(
 
     const errorMessage = err.message || 'Build failed unexpectedly';
     const isTimeout = isTimedOut || errorMessage.toLowerCase().includes('timed out');
+
+    // Best-effort failure log archive upload
+    try {
+      await uploadObject(
+        `deployments/${deploymentId}/logs.txt`,
+        logBuffer,
+        'text/plain; charset=utf-8'
+      );
+    } catch {
+      // ignore
+    }
 
     try {
       await updateDeploymentStatus(
@@ -511,6 +569,8 @@ export async function executeBuild(
         'Failed updating deployment failure status'
       );
     }
+
+    await logWriter?.finish(isTimeout ? 'timed_out' : 'failed', waitResult?.StatusCode ?? 1);
 
     throw err;
   } finally {

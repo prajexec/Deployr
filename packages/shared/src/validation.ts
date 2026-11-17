@@ -80,11 +80,20 @@ export function validateRepoUrl(urlStr: string): {
 }
 
 /**
+ * Validates and sanitizes a deployment ID.
+ * Strict format: 'd-' followed by 32 lowercase hex characters (128-bit random entropy).
+ */
+export const DEPLOYMENT_ID_REGEX = /^d-[a-f0-9]{32}$/;
+
+export function isValidDeploymentId(id: string): boolean {
+  if (!id || typeof id !== 'string') return false;
+  return DEPLOYMENT_ID_REGEX.test(id);
+}
+
+/**
  * Validates and sanitizes a deployment ID for use as a subdomain.
- * Subdomains must be 1-63 chars, lowercase alphanumeric + hyphens, not starting or ending with hyphen.
+ * Subdomains must strictly match the 128-bit deployment ID format.
  */
 export function isValidSubdomain(subdomain: string): boolean {
-  if (!subdomain || typeof subdomain !== 'string') return false;
-  if (subdomain.length > 63) return false;
-  return /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(subdomain);
+  return isValidDeploymentId(subdomain);
 }

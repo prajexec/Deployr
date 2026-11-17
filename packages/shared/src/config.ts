@@ -23,11 +23,16 @@ const configSchema = z.object({
   MAX_LOG_BYTES: z.coerce.number().default(5242880),
   MAX_REPO_SIZE_MB: z.coerce.number().default(100),
   FRONTEND_URL: z.string().default('http://localhost:5173'),
+  API_KEY: z.string().optional(),
 });
 
 export type Config = z.infer<typeof configSchema>;
 
 let cachedConfig: Config | null = null;
+
+export function resetConfig(): void {
+  cachedConfig = null;
+}
 
 export function getConfig(): Config {
   if (!cachedConfig) {
