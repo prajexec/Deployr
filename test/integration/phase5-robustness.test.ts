@@ -101,9 +101,9 @@ describe('Phase 5 Integration: Robustness, Cancellation, and Atomic Rollback', (
     await updateDeploymentStatus(depId, DeploymentStatus.CLONING);
     await updateDeploymentStatus(depId, DeploymentStatus.BUILDING);
 
-    // Run recovery with includeAllOnStartup to simulate worker reboot
+    // Run recovery with buildTimeoutMs: 0 to simulate expired build timeout after worker crash
     const recoveryResult = await recoverStuckDeployments({
-      includeAllOnStartup: true,
+      buildTimeoutMs: 0,
     });
 
     expect(recoveryResult.recoveredDeploymentIds).toContain(depId);
