@@ -33,12 +33,12 @@ This document records architectural decisions made throughout the design and imp
 
 - **Decision**: Stream live build logs to Redis Streams during active execution, and write a single aggregated log archive to MinIO when the build concludes. The Postgres database retains only metadata (`deployments` and `projects`).
 - **Alternatives Considered**:
-  1. *Relational table (`deployment_logs(deployment_id, seq, ts, stream, line)`)*: Storing every single line of output from `npm install` and Vite builds in Postgres generates thousands of row inserts per build. This causes database write amplification, WAL bloat, and table fragmentation.
-  2. *Redis only*: Storing logs forever in Redis consumes expensive RAM for historical deployments that are rarely accessed.
+  1. *Relational table (`deployment_logs(deployment_id, seq, ts, stream, line)`)*: Storing each stdout/stderr line as an individual relational row introduces high insert frequency, index maintenance overhead, and database table growth across hundreds of builds, even though log lines are append-only and read sequentially in bulk.
+  2. *Redis only*: Storing logs indefinitely in Redis consumes expensive memory for historical deployments that are rarely accessed.
 - **Why this one**:
-  - Redis Streams (`XADD`, `XREAD`, `XRANGE`) provide sub-millisecond append latency, built-in monotonic sequential IDs (`<ms>-<seq>`), and pub/sub capabilities ideal for Server-Sent Events (SSE) with `Last-Event-ID` resume.
-  - S3/MinIO is designed for cost-effective, durable blob storage. Archiving completed logs to MinIO keeps Postgres lean and fast, while freeing Redis memory via stream trimming (`XTRIM` / `XDEL`).
-- **Trade-offs**: Requires the API to check both Redis (for active builds) and MinIO (for completed/terminal builds) when serving logs.
+  - Redis Streams (`XADD`, `XREAD`, `XRANGE`) provide low-latency append operations, monotonic sequential IDs (`<ms>-<seq>`), and cursoring ideal for Server-Sent Events (SSE) with `Last-Event-ID` resume.
+  - S3/MinIO is designed for cost-effective, durable object storage. Archiving completed logs as a single compressed or plain object in MinIO keeps Postgres dedicated to relational metadata, while Redis memory can be freed via stream trimming (`XTRIM` / `XDEL`).
+- **Trade-offs**: Requires the API to check Redis for active builds and MinIO for finished/terminal builds when serving historical logs.
 
 ---
 
@@ -61,3 +61,14 @@ This document records architectural decisions made throughout the design and imp
   2. *Local filesystem storage (`/var/data/sites`)*: Violates the twelve-factor app statelessness principle and prevents scaling workers or routers independently across multiple nodes or containers.
 - **Why this one**: AWS SDK S3 client is the cloud-native industry standard. With `forcePathStyle: true`, the exact same client code works seamlessly with self-hosted MinIO locally and with AWS S3, Cloudflare R2, or Google Cloud Storage in production without code changes.
 - **Trade-offs**: Local MinIO requires an initialization step to guarantee bucket existence prior to the first upload.
+
+---
+
+## 6. Phase 1 Placeholders for Worker and Router Services
+
+- **Decision**: Keep the `worker` process alive via an interval timer and expose a minimal `/healthz` HTTP listener in `router` during Phase 1.
+- **Alternatives Considered**:
+  1. *Omit worker and router from docker-compose.yml during Phase 1*: Would fail the acceptance criteria that `docker compose up` brings all services up healthy.
+  2. *Let worker and router run a single log statement and exit*: Containers would enter `Exited (0)` status, causing confusion as to whether services crashed or completed.
+- **Why this one**: Provides stable, running containers that pass compose health checks and orchestration wiring in Phase 1, while clearly marking the boundaries where Phase 2 logic (BullMQ consumer in worker, wildcard request routing in router) will be implemented.
+- **Trade-offs**: Temporary scaffolding code in `apps/worker/src/index.ts` and `apps/router/src/index.ts` that will be replaced in Phase 2.
