@@ -43,9 +43,7 @@ async function bootstrap() {
 
   // 2. Recover any stuck deployments in Postgres left by previous crashed worker
   try {
-    const { recoveredCount, recoveredDeploymentIds } = await recoverStuckDeployments({
-      includeAllOnStartup: true,
-    });
+    const { recoveredCount, recoveredDeploymentIds } = await recoverStuckDeployments();
     if (recoveredCount > 0) {
       logger.info(
         { recoveredCount, recoveredDeploymentIds },

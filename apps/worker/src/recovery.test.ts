@@ -52,9 +52,14 @@ describe('Worker Crash Recovery', () => {
       }),
     };
 
+    const mockQueue: any = {
+      getJobs: vi.fn().mockResolvedValue([]),
+    };
+
     const result = await recoverStuckDeployments({
       dockerClient: mockDocker,
-      maxAgeMs: 300000,
+      queue: mockQueue,
+      buildTimeoutMs: 300000,
     });
 
     expect(result.recoveredCount).toBe(2);
@@ -104,9 +109,90 @@ describe('Worker Crash Recovery', () => {
       getVolume: vi.fn(),
     };
 
+    const mockQueue: any = {
+      getJobs: vi.fn().mockResolvedValue([]),
+    };
+
     const result = await recoverStuckDeployments({
       dockerClient: mockDocker,
-      includeAllOnStartup: true,
+      queue: mockQueue,
+      buildTimeoutMs: 300000,
+    });
+
+    expect(result.recoveredCount).toBe(0);
+    expect(mockUpdateStatus).not.toHaveBeenCalled();
+    expect(mockDocker.getContainer).not.toHaveBeenCalled();
+  });
+
+  it('skips deployments queued or active in BullMQ', async () => {
+    const stuckDeployments: any[] = [
+      {
+        id: 'd-queued-or-active',
+        project_id: 'prj_test1',
+        status: shared.DeploymentStatus.BUILDING,
+        created_at: new Date(Date.now() - 600000),
+        started_at: new Date(Date.now() - 600000),
+      },
+    ];
+
+    vi.spyOn(shared, 'getStuckDeployments').mockResolvedValue(stuckDeployments);
+    const mockUpdateStatus = vi
+      .spyOn(shared, 'updateDeploymentStatus')
+      .mockResolvedValue({} as any);
+
+    const mockDocker: any = {
+      getContainer: vi.fn(),
+      getVolume: vi.fn(),
+    };
+
+    const mockQueue: any = {
+      getJobs: vi.fn().mockResolvedValue([
+        {
+          data: { deploymentId: 'd-queued-or-active' },
+        },
+      ]),
+    };
+
+    const result = await recoverStuckDeployments({
+      dockerClient: mockDocker,
+      queue: mockQueue,
+      buildTimeoutMs: 300000,
+    });
+
+    expect(result.recoveredCount).toBe(0);
+    expect(mockUpdateStatus).not.toHaveBeenCalled();
+    expect(mockDocker.getContainer).not.toHaveBeenCalled();
+  });
+
+  it('skips deployments younger than the build timeout', async () => {
+    const stuckDeployments: any[] = [
+      {
+        id: 'd-young',
+        project_id: 'prj_test1',
+        status: shared.DeploymentStatus.BUILDING,
+        created_at: new Date(Date.now() - 30000), // 30s ago (< 300s timeout)
+        started_at: new Date(Date.now() - 30000),
+      },
+    ];
+
+    vi.spyOn(shared, 'getStuckDeployments').mockResolvedValue(stuckDeployments);
+    const mockUpdateStatus = vi
+      .spyOn(shared, 'updateDeploymentStatus')
+      .mockResolvedValue({} as any);
+
+    const mockDocker: any = {
+      getContainer: vi.fn(),
+      getVolume: vi.fn(),
+    };
+
+    const mockQueue: any = {
+      getJobs: vi.fn().mockResolvedValue([]),
+    };
+
+    const result = await recoverStuckDeployments({
+      dockerClient: mockDocker,
+      queue: mockQueue,
+      buildTimeoutMs: 300000, // 5 min timeout
     });
 
     expect(result.recoveredCount).toBe(0);
