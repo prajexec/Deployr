@@ -23,10 +23,22 @@ A self-hosted, zero-cost deployment platform (Vercel/Netlify-style) built from s
 - Node.js 20+
 - pnpm 9+
 
-### 2. Start Infrastructure
+### 2. Fresh Clone Setup
+To bootstrap a clean clone without running any manual Docker setup commands:
 ```bash
-docker compose up -d
+# 1. Clone repository & enter workspace
+git clone https://github.com/prajexec/Deployr.git && cd Deployr
+
+# 2. Configure environment (pre-configured with local dev defaults)
+cp .env.example .env
+
+# 3. Install dependencies
+pnpm install
+
+# 4. Build and start all services
+docker compose up -d --build
 ```
+`docker compose up -d --build` builds all application containers and the isolated sandbox builder image (`deployservice-builder:latest`). The worker automatically and idempotently creates the dedicated build bridge network (`deployservice-build-net`) on startup before processing any build jobs. No manual Docker network or image management is required.
 
 ### 3. Run Tests
 ```bash
